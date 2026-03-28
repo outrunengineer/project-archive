@@ -2,7 +2,7 @@
 
 A visual, historical record of a project's lifecycle — capacity, decisions, and impediments plotted as an interactive timeline. Built for non-technical executive audiences who need to understand the realities and challenges of a long-term project at a glance.
 
-![Project Timeline View](designs/screenshots/timeline-screen.png)
+![Project Timeline View](designs/screenshots/timeline-screen.JPG)
 
 ---
 
@@ -88,7 +88,7 @@ Open [http://localhost:3000](http://localhost:3000) and navigate to **Projects**
 - Tooltip on event hover with name, type, date, description, and headcount
 - Export the visualization as an SVG
 
-![Timeline Configuration](designs/screenshots/timeline-config-screen.png)
+![Timeline Configuration](designs/screenshots/timeline-config-screen.JPG)
 
 ---
 
