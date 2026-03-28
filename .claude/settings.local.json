@@ -41,7 +41,9 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000/ --max-time 10)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" -L http://localhost:3000/ --max-time 15)",
       "Bash(powershell -Command \"Get-Process node -ErrorAction SilentlyContinue | Select-Object Id, CPU, StartTime | Format-Table\")",
-      "Bash(powershell -Command \"Stop-Process -Name node -Force -ErrorAction SilentlyContinue\")"
+      "Bash(powershell -Command \"Stop-Process -Name node -Force -ErrorAction SilentlyContinue\")",
+      "Bash(python -c \"import sys,json; p=json.load\\(sys.stdin\\); print\\(p.get\\(''''engines'''',{}\\)\\)\")",
+      "Bash(node -e \"const p=require\\(''./package.json''\\); console.log\\(JSON.stringify\\({name:p.name,version:p.version,engines:p.engines,scripts:p.scripts},null,2\\)\\)\")"
     ]
   }
 }
