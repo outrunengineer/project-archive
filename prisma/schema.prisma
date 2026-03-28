@@ -1,0 +1,79 @@
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Project {
+  id                Int        @id @default(autoincrement())
+  name              String
+  startDate         DateTime
+  status            String     @default("Ongoing")
+  statusDate        DateTime?
+  startingHeadcount Int        @default(1)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+  timelines         Timeline[]
+}
+
+model Timeline {
+  id              Int              @id @default(autoincrement())
+  name            String
+  description     String?
+  isMain          Boolean          @default(true)
+  branchName      String           @default("Main")
+  branchCloseMode BranchCloseMode?
+  projectId       Int
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  events          Event[]
+}
+
+model Event {
+  id                Int              @id @default(autoincrement())
+  name              String
+  date              DateTime
+  description       String?
+  type              EventType
+  impactSentiment   ImpactSentiment  @default(NEUTRAL)
+  resourceCount     Int?
+  resourcesReturned Boolean          @default(false)
+  conclusionType    ConclusionType?
+  timelineId        Int
+  timeline          Timeline         @relation(fields: [timelineId], references: [id], onDelete: Cascade)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+}
+
+enum BranchCloseMode {
+  REMERGE
+  CLOSE
+}
+
+enum EventType {
+  DELIVERABLE
+  PRIORITY_CHANGE
+  STAFFING_CHANGE
+  INITIATIVE
+  KEY_DECISION
+  IMPEDIMENT
+  FINISHED
+}
+
+enum ConclusionType {
+  PAUSED
+  CANCELLED
+  SUCCESSFUL
+}
+
+enum ImpactSentiment {
+  POSITIVE
+  NEGATIVE
+  NEUTRAL
+}

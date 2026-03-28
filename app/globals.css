@@ -1,0 +1,50 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+
+@theme inline {
+  /* ─── Typography ─── */
+  --font-display: "Manrope", sans-serif;
+  --font-body: "Inter", sans-serif;
+
+  /* ─── Color Tokens (from DESIGN.md) ─── */
+  --color-primary:                  #000000;
+  --color-on-primary:               #ffffff;
+  --color-on-primary-container:     #648d78;
+  --color-primary-fixed:            #c8e6c9;
+  --color-primary-fixed-dim:        #a5d6a7;
+
+  --color-secondary:                #545e76;
+  --color-on-secondary-container:   #5a647c;
+
+  --color-tertiary-fixed:           #ffcdd2;
+  --color-tertiary-fixed-dim:       #ef9a9a;
+  --color-on-tertiary-fixed-variant: #b71c1c;
+
+  --color-surface:                  #f8f9fa;
+  --color-surface-bright:           #ffffff;
+  --color-surface-variant:          rgba(84, 94, 118, 0.8);
+  --color-surface-tint:             #648d78;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low:    #f1f3f4;
+  --color-surface-container:        #e8eaed;
+  --color-surface-container-high:   #dde1e7;
+  --color-surface-container-highest:#d2d6dc;
+
+  --color-on-surface:               #1a1c1e;
+  --color-on-surface-variant:       #44474c;
+  --color-outline-variant:          rgba(68, 71, 76, 0.15);
+
+  --color-inverse-surface:          #2d3035;
+
+  /* ─── Spacing Scale (from DESIGN.md) ─── */
+  --spacing-2:  0.45rem;
+  --spacing-4:  0.9rem;
+  --spacing-12: 2.75rem;
+  --spacing-16: 3.5rem;
+}
+
+body {
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
+  font-family: var(--font-body);
+}
