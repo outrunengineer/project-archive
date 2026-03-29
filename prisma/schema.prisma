@@ -33,6 +33,7 @@ model Timeline {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   events          Event[]
+  risks           Risk[]
 }
 
 model Event {
@@ -49,6 +50,21 @@ model Event {
   timeline          Timeline         @relation(fields: [timelineId], references: [id], onDelete: Cascade)
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
+}
+
+model Risk {
+  id         Int       @id @default(autoincrement())
+  name       String
+  startDate  DateTime
+  endDate    DateTime?
+  status     String    @default("Ongoing")
+  severity   String
+  types      String
+  impact     String?
+  timelineId Int
+  timeline   Timeline  @relation(fields: [timelineId], references: [id], onDelete: Cascade)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 }
 
 enum BranchCloseMode {

@@ -5,3 +5,4 @@ export { Select } from './Select';
 export { StatusChip } from './StatusChip';
 export { Card } from './Card';
 export { IconButton } from './IconButton';
+export { MultiSelect } from './MultiSelect';

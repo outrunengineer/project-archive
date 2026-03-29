@@ -29,6 +29,18 @@ type Branch = {
   events: Event[];
 };
 
+type Risk = {
+  id: number;
+  name: string;
+  startDate: string;
+  endDate: string | null;
+  status: string;
+  severity: string;
+  types: string[];
+  impact: string | null;
+  timelineId: number;
+};
+
 type Timeline = {
   id: number;
   name: string;
@@ -43,6 +55,31 @@ type Timeline = {
     statusDate: string | null;
   };
   events: Event[];
+};
+
+const SEVERITY_FILL: Record<string, string> = {
+  LOW: 'rgba(251, 191, 36, 0.15)',
+  MEDIUM: 'rgba(249, 115, 22, 0.15)',
+  HIGH: 'rgba(239, 68, 68, 0.15)',
+};
+
+const SEVERITY_STROKE: Record<string, string> = {
+  LOW: 'rgba(251, 191, 36, 0.4)',
+  MEDIUM: 'rgba(249, 115, 22, 0.4)',
+  HIGH: 'rgba(239, 68, 68, 0.4)',
+};
+
+const SEVERITY_TEXT: Record<string, string> = {
+  LOW: 'rgba(161, 120, 0, 0.85)',
+  MEDIUM: 'rgba(180, 75, 0, 0.85)',
+  HIGH: 'rgba(180, 30, 30, 0.85)',
+};
+
+const RISK_TYPE_LABEL: Record<string, string> = {
+  RESOURCE: 'Resource',
+  DEPENDENCY: 'Dependency',
+  TECHNICAL: 'Technical',
+  SCOPE: 'Scope',
 };
 
 const SENTIMENT_COLOR: Record<string, string> = {
@@ -65,10 +102,12 @@ export function TimelineViewClient({
   timeline,
   branches,
   updatedAt,
+  risks,
 }: {
   timeline: Timeline;
   branches: Branch[];
   updatedAt: string;
+  risks: Risk[];
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -78,9 +117,11 @@ export function TimelineViewClient({
   const panModeRef = useRef(panMode);
   useEffect(() => { panModeRef.current = panMode; }, [panMode]);
   const [zoomLevel, setZoomLevel] = useState(1);
-  const [tooltip, setTooltip] = useState<{
-    x: number; y: number; event: Event;
-  } | null>(null);
+  const [tooltip, setTooltip] = useState<
+    | { kind: 'event'; event: Event; x: number; y: number }
+    | { kind: 'risk'; risk: Risk; x: number; y: number }
+    | null
+  >(null);
 
   const scheduleHide = useCallback(() => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
@@ -172,6 +213,96 @@ export function TimelineViewClient({
     const xScale = d3.scaleTime()
       .domain([domainStart, domainEnd])
       .range([MARGIN.left, width - MARGIN.right]);
+
+    /* ─── Risk Heatmap (bottommost layer) ─── */
+    const risksG = g.append('g').attr('class', 'risks-heatmap').attr('clip-path', 'url(#timeline-clip)');
+    const today = new Date();
+
+    risks.forEach((risk) => {
+      const rStart = new Date(risk.startDate);
+      const rEnd = risk.status === 'Ongoing' ? today : risk.endDate ? new Date(risk.endDate) : today;
+      const x1 = xScale(rStart);
+      const x2 = xScale(rEnd);
+      const w = Math.max(x2 - x1, 2);
+      const fill = SEVERITY_FILL[risk.severity] ?? 'rgba(249,115,22,0.15)';
+      const stroke = SEVERITY_STROKE[risk.severity] ?? 'rgba(249,115,22,0.4)';
+
+      risksG.append('rect')
+        .attr('x', x1).attr('y', MARGIN.top)
+        .attr('width', w).attr('height', height - MARGIN.top)
+        .attr('fill', fill);
+
+      // Left edge
+      risksG.append('line')
+        .attr('x1', x1).attr('x2', x1)
+        .attr('y1', MARGIN.top).attr('y2', height)
+        .attr('stroke', stroke).attr('stroke-width', 1.5);
+
+      // Right edge (only for completed risks)
+      if (risk.status !== 'Ongoing') {
+        risksG.append('line')
+          .attr('x1', x2).attr('x2', x2)
+          .attr('y1', MARGIN.top).attr('y2', height)
+          .attr('stroke', stroke).attr('stroke-width', 1.5);
+      }
+    });
+
+    // Label blocks — stack vertically for overlapping start dates
+    const LABEL_HEIGHT = 42;
+    const LABEL_WIDTH = 130;
+    const LABEL_TOP = MARGIN.top + 6;
+    const placed: Array<{ x: number; y: number }> = [];
+
+    [...risks]
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+      .forEach((risk) => {
+        const lx = xScale(new Date(risk.startDate));
+        let ly = LABEL_TOP;
+        for (const p of placed) {
+          if (Math.abs(p.x - lx) < LABEL_WIDTH) {
+            ly = Math.max(ly, p.y + LABEL_HEIGHT);
+          }
+        }
+        placed.push({ x: lx, y: ly });
+
+        const rEnd = risk.status === 'Ongoing' ? today : risk.endDate ? new Date(risk.endDate) : today;
+        const dateRange = risk.status === 'Ongoing'
+          ? `${d3.timeFormat('%b %Y')(new Date(risk.startDate))} – Ongoing`
+          : `${d3.timeFormat('%b %Y')(new Date(risk.startDate))} – ${d3.timeFormat('%b %Y')(rEnd)}`;
+        const typesLabel = risk.types.map((t) => RISK_TYPE_LABEL[t] ?? t).join(' & ');
+        const textColor = SEVERITY_TEXT[risk.severity] ?? 'rgba(100,50,0,0.85)';
+
+        const labelG = risksG.append('g').style('cursor', 'pointer');
+
+        labelG.append('text')
+          .attr('x', lx + 4).attr('y', ly + 11)
+          .attr('font-size', '9px').attr('font-weight', '700')
+          .attr('fill', textColor)
+          .attr('font-family', 'Inter, sans-serif')
+          .attr('letter-spacing', '0.06em')
+          .text(`${risk.severity} ${typesLabel} Risk`);
+
+        labelG.append('text')
+          .attr('x', lx + 4).attr('y', ly + 23)
+          .attr('font-size', '9px')
+          .attr('fill', 'rgba(68,71,76,0.55)')
+          .attr('font-family', 'Inter, sans-serif')
+          .text(dateRange);
+
+        labelG.append('text')
+          .attr('x', lx + 4).attr('y', ly + 36)
+          .attr('font-size', '10px').attr('font-weight', '600')
+          .attr('fill', 'rgba(68,71,76,0.8)')
+          .attr('font-family', 'Manrope, sans-serif')
+          .text(risk.name.length > 22 ? risk.name.slice(0, 22) + '…' : risk.name);
+
+        labelG
+          .on('mouseenter', (mouseEvent: MouseEvent) => {
+            cancelHide();
+            setTooltip({ kind: 'risk', risk, x: mouseEvent.clientX, y: mouseEvent.clientY });
+          })
+          .on('mouseleave', () => scheduleHide());
+      });
 
     /* ─── Capacity Band ─── */
     const capacityG = g.append('g').attr('class', 'capacity-band').attr('clip-path', 'url(#timeline-clip)');
@@ -509,7 +640,7 @@ export function TimelineViewClient({
           .style('cursor', 'pointer')
           .on('mouseenter', (mouseEvent: MouseEvent) => {
             cancelHide();
-            setTooltip({ x: mouseEvent.clientX, y: mouseEvent.clientY, event });
+            setTooltip({ kind: 'event', event, x: mouseEvent.clientX, y: mouseEvent.clientY });
           })
           .on('mouseleave', () => scheduleHide());
       });
@@ -574,7 +705,7 @@ export function TimelineViewClient({
         .style('cursor', 'pointer')
         .on('mouseenter', (mouseEvent: MouseEvent) => {
           cancelHide();
-          setTooltip({ x: mouseEvent.clientX, y: mouseEvent.clientY, event });
+          setTooltip({ kind: 'event', event, x: mouseEvent.clientX, y: mouseEvent.clientY });
         })
         .on('mouseleave', () => scheduleHide());
     });
@@ -595,7 +726,7 @@ export function TimelineViewClient({
 
     zoomRef.current = zoom;
     d3.select(svg).call(zoom);
-  }, [allMainEvents, branches, capacitySegments, domainStart, domainEnd, globalMaxHeadcount, branchCapacitySegments, startDate, timelineEnd, cancelHide, scheduleHide]);
+  }, [allMainEvents, branches, capacitySegments, domainStart, domainEnd, globalMaxHeadcount, branchCapacitySegments, startDate, timelineEnd, cancelHide, scheduleHide, risks]);
 
   useEffect(() => {
     drawTimeline();
@@ -746,16 +877,41 @@ export function TimelineViewClient({
             onMouseEnter={cancelHide}
             onMouseLeave={scheduleHide}
           >
-            <div className="font-semibold font-display mb-0.5">{tooltip.event.name}</div>
-            <div className="opacity-70 mb-1">{EVENT_TYPE_LABEL[tooltip.event.type]}</div>
-            <div className="opacity-70">{formatDate(tooltip.event.date)}</div>
-            {tooltip.event.description && (
-              <div className="opacity-70 mt-1 border-t border-white/20 pt-1">
-                {tooltip.event.description}
-              </div>
-            )}
-            {tooltip.event.resourceCount != null && (
-              <div className="opacity-70 mt-1">{tooltip.event.resourceCount} engineers</div>
+            {tooltip.kind === 'event' ? (
+              <>
+                <div className="font-semibold font-display mb-0.5">{tooltip.event.name}</div>
+                <div className="opacity-70 mb-1">{EVENT_TYPE_LABEL[tooltip.event.type]}</div>
+                <div className="opacity-70">{formatDate(tooltip.event.date)}</div>
+                {tooltip.event.description && (
+                  <div className="opacity-70 mt-1 border-t border-white/20 pt-1">
+                    {tooltip.event.description}
+                  </div>
+                )}
+                {tooltip.event.resourceCount != null && (
+                  <div className="opacity-70 mt-1">{tooltip.event.resourceCount} engineers</div>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="font-semibold font-display mb-0.5">{tooltip.risk.name}</div>
+                <div className="opacity-70 mb-1">
+                  {tooltip.risk.severity} risk &middot; {tooltip.risk.types.map((t) => RISK_TYPE_LABEL[t] ?? t).join(', ')}
+                </div>
+                <div className="opacity-70">
+                  {formatDate(tooltip.risk.startDate)}
+                  {tooltip.risk.status === 'Ongoing'
+                    ? ' – Ongoing'
+                    : tooltip.risk.endDate
+                      ? ` – ${formatDate(tooltip.risk.endDate)}`
+                      : ''}
+                </div>
+                <div className="opacity-70 mt-1">{tooltip.risk.status}</div>
+                {tooltip.risk.impact && (
+                  <div className="opacity-70 mt-1 border-t border-white/20 pt-1">
+                    {tooltip.risk.impact}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

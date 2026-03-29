@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
 import { Select } from '@/components/ui/Select';
+import { MultiSelect } from '@/components/ui/MultiSelect';
 import { StatusChip } from '@/components/ui/StatusChip';
 import { IconButton } from '@/components/ui/IconButton';
 import { formatDate } from '@/lib/utils';
@@ -53,6 +54,18 @@ type Sibling = {
   _count: { events: number };
 };
 
+type Risk = {
+  id: number;
+  name: string;
+  startDate: string;
+  endDate: string | null;
+  status: string;
+  severity: string;
+  types: string[];
+  impact: string | null;
+  timelineId: number;
+};
+
 const EVENT_TYPE_OPTIONS = [
   { value: 'DELIVERABLE', label: 'Deliverable' },
   { value: 'PRIORITY_CHANGE', label: 'Priority Change' },
@@ -82,6 +95,30 @@ const STATUS_OPTIONS = [
   { value: 'Cancelled', label: 'Cancelled' },
 ];
 
+const SEVERITY_OPTIONS = [
+  { value: 'LOW', label: 'Low' },
+  { value: 'MEDIUM', label: 'Medium' },
+  { value: 'HIGH', label: 'High' },
+];
+
+const RISK_STATUS_OPTIONS = [
+  { value: 'Ongoing', label: 'Ongoing' },
+  { value: 'Completed', label: 'Completed' },
+];
+
+const RISK_TYPE_OPTIONS = [
+  { value: 'RESOURCE', label: 'Resource' },
+  { value: 'DEPENDENCY', label: 'Dependency' },
+  { value: 'TECHNICAL', label: 'Technical' },
+  { value: 'SCOPE', label: 'Scope' },
+];
+
+const SEVERITY_CHIP_MAP: Record<string, 'positive' | 'negative' | 'neutral'> = {
+  LOW: 'positive',
+  MEDIUM: 'neutral',
+  HIGH: 'negative',
+};
+
 const SENTIMENT_CHIP_MAP: Record<string, 'positive' | 'negative' | 'neutral'> = {
   POSITIVE: 'positive',
   NEGATIVE: 'negative',
@@ -99,6 +136,20 @@ type NewEventDraft = {
   conclusionType: string;
   timelineId: number;
 };
+
+type NewRiskDraft = {
+  name: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+  severity: string;
+  types: string[];
+  impact: string;
+};
+
+function blankRiskDraft(): NewRiskDraft {
+  return { name: '', startDate: '', endDate: '', status: 'Ongoing', severity: 'MEDIUM', types: [], impact: '' };
+}
 
 function blankDraft(timelineId: number): NewEventDraft {
   return {
@@ -140,6 +191,16 @@ export function TimelineConfigClient({
   const [saving, setSaving] = useState(false);
   const [newEventErrors, setNewEventErrors] = useState<{ name?: string; date?: string; general?: string }>({});
   const [configErrors, setConfigErrors] = useState<{ name?: string; startDate?: string; startingHeadcount?: string }>({});
+
+  /* ─── Tab state ─── */
+  const [activeTab, setActiveTab] = useState<'events' | 'risks'>('events');
+
+  /* ─── Risks state ─── */
+  const [risksLoaded, setRisksLoaded] = useState(false);
+  const [risks, setRisks] = useState<Risk[]>([]);
+  const [riskDrafts, setRiskDrafts] = useState<{ [id: number]: Partial<Risk> }>({});
+  const [newRisk, setNewRisk] = useState<NewRiskDraft | null>(null);
+  const [newRiskErrors, setNewRiskErrors] = useState<{ name?: string; startDate?: string; types?: string; general?: string }>({});
 
   /* ─── Branch creation ─── */
   const [showBranchForm, setShowBranchForm] = useState(false);
@@ -296,6 +357,91 @@ export function TimelineConfigClient({
     router.refresh();
   }
 
+  /* ─── Risk helpers ─── */
+  async function loadRisks() {
+    if (risksLoaded) return;
+    const res = await fetch(`/api/timelines/${timeline.id}/risks`);
+    if (res.ok) {
+      const data = await res.json() as Risk[];
+      setRisks(data.map((r) => ({
+        ...r,
+        startDate: r.startDate.split('T')[0],
+        endDate: r.endDate ? r.endDate.split('T')[0] : null,
+      })));
+    }
+    setRisksLoaded(true);
+  }
+
+  const patchRiskDraft = useCallback((id: number, field: string, value: unknown) => {
+    setRiskDrafts((d) => ({ ...d, [id]: { ...d[id], [field]: value } }));
+  }, []);
+
+  const riskValue = (risk: Risk, field: keyof Risk) =>
+    riskDrafts[risk.id]?.[field] !== undefined ? riskDrafts[risk.id][field] : risk[field];
+
+  async function saveRisk(risk: Risk) {
+    const patch = riskDrafts[risk.id];
+    if (!patch || Object.keys(patch).length === 0) return;
+    const body: Record<string, unknown> = { ...patch };
+    if (patch.startDate) body.startDate = new Date(patch.startDate as string).toISOString();
+    if (patch.endDate !== undefined) body.endDate = patch.endDate ? new Date(patch.endDate as string).toISOString() : null;
+    const res = await fetch(`/api/risks/${risk.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      const updated = await res.json() as Risk;
+      setRisks((rv) => rv.map((r) => r.id === risk.id ? {
+        ...r, ...updated,
+        startDate: updated.startDate.split('T')[0],
+        endDate: updated.endDate ? updated.endDate.split('T')[0] : null,
+      } : r));
+      setRiskDrafts((d) => { const next = { ...d }; delete next[risk.id]; return next; });
+    }
+  }
+
+  async function deleteRisk(id: number) {
+    await fetch(`/api/risks/${id}`, { method: 'DELETE' });
+    setRisks((rv) => rv.filter((r) => r.id !== id));
+  }
+
+  async function addRisk() {
+    if (!newRisk) return;
+    const errors: typeof newRiskErrors = {};
+    if (!newRisk.name.trim()) errors.name = 'Required';
+    if (!newRisk.startDate) errors.startDate = 'Required';
+    if (newRisk.types.length === 0) errors.types = 'Select at least one type';
+    if (Object.keys(errors).length > 0) { setNewRiskErrors(errors); return; }
+    setNewRiskErrors({});
+    try {
+      const res = await fetch(`/api/timelines/${timeline.id}/risks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...newRisk,
+          startDate: new Date(newRisk.startDate).toISOString(),
+          endDate: newRisk.endDate ? new Date(newRisk.endDate).toISOString() : null,
+        }),
+      });
+      if (res.ok) {
+        const created = await res.json() as Risk;
+        setRisks((rv) => [...rv, {
+          ...created,
+          startDate: created.startDate.split('T')[0],
+          endDate: created.endDate ? created.endDate.split('T')[0] : null,
+        }].sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime()));
+        setNewRisk(null);
+        setNewRiskErrors({});
+      } else {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        setNewRiskErrors({ general: body.error ?? `Save failed (${res.status})` });
+      }
+    } catch {
+      setNewRiskErrors({ general: 'Network error — could not save risk.' });
+    }
+  }
+
   return (
     <div className="flex flex-1 min-h-0">
       {/* ─── Left Panel ─── */}
@@ -422,7 +568,28 @@ export function TimelineConfigClient({
           </div>
         </div>
 
-        {/* Search + Add Event */}
+        {/* Tab Selector */}
+        <div className="px-8 pt-5 pb-0 flex items-center gap-1 border-b border-outline-variant/20">
+          {(['events', 'risks'] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => {
+                setActiveTab(tab);
+                if (tab === 'risks') loadRisks();
+              }}
+              className={`px-4 py-2 text-sm font-medium rounded-t-md transition-colors capitalize
+                ${activeTab === tab
+                  ? 'bg-surface text-on-surface border-b-2 border-primary -mb-px'
+                  : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low'
+                }`}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+
+        {/* Events Tab */}
+        {activeTab === 'events' && <>
         <div className="px-8 py-4 flex items-center gap-3">
           <div className="relative flex-1 max-w-xs">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-on-surface-variant" />
@@ -663,6 +830,216 @@ export function TimelineConfigClient({
             </button>
           )}
         </div>
+        </>}
+
+        {/* Risks Tab */}
+        {activeTab === 'risks' && <>
+        <div className="px-8 py-4 flex items-center gap-3">
+          <Button
+            size="sm"
+            onClick={() => setNewRisk(blankRiskDraft())}
+            disabled={!!newRisk}
+          >
+            <Plus className="w-3.5 h-3.5 mr-1" />
+            Add Risk
+          </Button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-8 pb-4">
+          {/* New risk row */}
+          {newRisk && (
+            <div className="mb-4 bg-surface-container-lowest rounded-xl p-4 flex flex-col gap-3">
+              <h3 className="text-sm font-semibold text-on-surface">New Risk</h3>
+              <div className="grid grid-cols-3 gap-3">
+                <Input
+                  label="Name"
+                  placeholder="Risk name"
+                  value={newRisk.name}
+                  error={newRiskErrors.name}
+                  onChange={(e) => { setNewRiskErrors((er) => ({ ...er, name: undefined })); setNewRisk((n) => n && { ...n, name: e.target.value }); }}
+                />
+                <Input
+                  label="Start Date"
+                  type="date"
+                  value={newRisk.startDate}
+                  error={newRiskErrors.startDate}
+                  onChange={(e) => { setNewRiskErrors((er) => ({ ...er, startDate: undefined })); setNewRisk((n) => n && { ...n, startDate: e.target.value }); }}
+                />
+                <Input
+                  label="End Date"
+                  type="date"
+                  value={newRisk.endDate}
+                  onChange={(e) => setNewRisk((n) => n && { ...n, endDate: e.target.value })}
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <Select
+                  label="Severity"
+                  options={SEVERITY_OPTIONS}
+                  value={newRisk.severity}
+                  onChange={(v) => setNewRisk((n) => n && { ...n, severity: v })}
+                />
+                <Select
+                  label="Status"
+                  options={RISK_STATUS_OPTIONS}
+                  value={newRisk.status}
+                  onChange={(v) => setNewRisk((n) => n && { ...n, status: v })}
+                />
+                <MultiSelect
+                  label="Types"
+                  options={RISK_TYPE_OPTIONS}
+                  value={newRisk.types}
+                  onChange={(v) => { setNewRiskErrors((er) => ({ ...er, types: undefined })); setNewRisk((n) => n && { ...n, types: v }); }}
+                  placeholder="Select types..."
+                />
+              </div>
+              {newRiskErrors.types && <span className="text-xs text-red-500">{newRiskErrors.types}</span>}
+              <Textarea
+                label="Project Impact"
+                rows={2}
+                placeholder="Describe the impact on the project…"
+                value={newRisk.impact}
+                onChange={(e) => setNewRisk((n) => n && { ...n, impact: e.target.value })}
+              />
+              <div className="flex items-center justify-end gap-2">
+                {newRiskErrors.general && (
+                  <span className="text-xs text-red-500 mr-auto">{newRiskErrors.general}</span>
+                )}
+                <Button variant="tertiary" size="sm" onClick={() => { setNewRisk(null); setNewRiskErrors({}); }}>
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={addRisk}>
+                  Save Risk
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {risks.length === 0 && !newRisk && (
+            <div className="text-center py-12 text-on-surface-variant">
+              <p className="text-sm">No risks yet. Add your first risk above.</p>
+            </div>
+          )}
+
+          {risks.length > 0 && (
+            <div
+              className="grid px-4 py-2 text-xs font-medium text-on-surface-variant uppercase tracking-wide"
+              style={{ gridTemplateColumns: '1fr 110px 130px 180px', gap: '0.75rem' }}
+            >
+              <span>Name</span>
+              <span>Start Date</span>
+              <span>End Date / Status</span>
+              <span>Severity & Type</span>
+            </div>
+          )}
+
+          {risks.map((risk) => (
+            <div
+              key={risk.id}
+              className="flex flex-col px-4 py-3 rounded-xl hover:bg-surface-container-lowest transition-colors group"
+            >
+            <div
+              className="grid items-start"
+              style={{ gridTemplateColumns: '1fr 110px 130px 180px', gap: '0.75rem' }}
+            >
+              {/* Name */}
+              <textarea
+                rows={2}
+                className="text-sm font-medium text-on-surface bg-transparent outline-none border-b border-transparent focus:border-outline-variant w-full resize-none"
+                value={String(riskValue(risk, 'name') ?? '')}
+                onChange={(e) => patchRiskDraft(risk.id, 'name', e.target.value)}
+              />
+
+              {/* Start Date */}
+              <input
+                type="date"
+                className="text-xs text-on-surface-variant bg-transparent outline-none w-full"
+                value={String(riskValue(risk, 'startDate') ?? '').split('T')[0]}
+                onChange={(e) => patchRiskDraft(risk.id, 'startDate', e.target.value)}
+              />
+
+              {/* End Date / Status */}
+              <div className="flex flex-col gap-1">
+                <input
+                  type="date"
+                  className="text-xs text-on-surface-variant bg-transparent outline-none w-full"
+                  value={String(riskValue(risk, 'endDate') ?? '').split('T')[0]}
+                  onChange={(e) => patchRiskDraft(risk.id, 'endDate', e.target.value || null)}
+                />
+                <select
+                  className="text-xs bg-surface-container-high rounded-md px-2 h-7 outline-none cursor-pointer w-full"
+                  value={String(riskValue(risk, 'status') ?? risk.status)}
+                  onChange={(e) => patchRiskDraft(risk.id, 'status', e.target.value)}
+                >
+                  {RISK_STATUS_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Severity & Type */}
+              <div className="flex flex-col gap-1">
+                {(() => {
+                  const sev = String(riskValue(risk, 'severity') ?? risk.severity);
+                  const SEVERITY_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+                    LOW:    { bg: 'rgba(251,191,36,0.15)',  border: 'rgba(251,191,36,0.6)',  text: '#b45309' },
+                    MEDIUM: { bg: 'rgba(249,115,22,0.15)',  border: 'rgba(249,115,22,0.6)',  text: '#c2410c' },
+                    HIGH:   { bg: 'rgba(239,68,68,0.15)',   border: 'rgba(239,68,68,0.6)',   text: '#b91c1c' },
+                  };
+                  const c = SEVERITY_COLORS[sev] ?? SEVERITY_COLORS.LOW;
+                  return (
+                    <span
+                      className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border"
+                      style={{ background: c.bg, borderColor: c.border, color: c.text }}
+                    >
+                      {sev.charAt(0) + sev.slice(1).toLowerCase()}
+                    </span>
+                  );
+                })()}
+                <select
+                  className="text-xs bg-surface-container-high rounded-md px-2 h-7 outline-none cursor-pointer w-full"
+                  value={String(riskValue(risk, 'severity') ?? risk.severity)}
+                  onChange={(e) => patchRiskDraft(risk.id, 'severity', e.target.value)}
+                >
+                  {SEVERITY_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+                <MultiSelect
+                  options={RISK_TYPE_OPTIONS}
+                  value={(riskValue(risk, 'types') as string[] | undefined) ?? risk.types}
+                  onChange={(v) => patchRiskDraft(risk.id, 'types', v)}
+                />
+              </div>
+            </div>
+            {/* Impact + Actions */}
+            <div className="mt-1.5 flex items-end gap-2">
+              <textarea
+                rows={2}
+                className="flex-1 text-xs text-on-surface-variant bg-transparent outline-none resize-none placeholder:text-on-surface-variant/40"
+                placeholder="Project impact…"
+                value={String(riskValue(risk, 'impact') ?? '')}
+                onChange={(e) => patchRiskDraft(risk.id, 'impact', e.target.value)}
+              />
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                <IconButton
+                  icon={<Save className="w-3.5 h-3.5" />}
+                  label="Save risk"
+                  size="sm"
+                  onClick={() => saveRisk(risk)}
+                />
+                <IconButton
+                  icon={<Trash2 className="w-3.5 h-3.5" />}
+                  label="Delete risk"
+                  size="sm"
+                  onClick={() => deleteRisk(risk.id)}
+                />
+              </div>
+            </div>
+            </div>
+          ))}
+        </div>
+        </>}
 
         {/* Bottom Action Bar */}
         <div className="px-8 py-4 bg-surface-container-highest flex items-center justify-between">

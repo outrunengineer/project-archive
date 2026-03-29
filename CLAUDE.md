@@ -120,7 +120,11 @@ Admin/edit view for setting up and managing a project's timeline and events.
 - Helper text: "Baseline allocation at project inception."
 - This value seeds the capacity line on the timeline visualization
 
-**Main Panel — Timeline Events Manager**
+**Main Panel — Tab Selector**
+- Two tabs toggle the main panel content: **Events** (default) and **Risks**
+- Left panel (General Configuration + Initial Resources) is unaffected by the active tab
+
+**Main Panel — Events tab (Timeline Events Manager)**
 - Subtitle: "Chronological record of key architectural and staffing milestones."
 - Search bar: "Search event details..."
 - "+ Add Event" button
@@ -152,6 +156,7 @@ Read-only interactive visualization of a project's timeline.
 
 **Timeline Visualization**
 - Horizontal timeline as the primary visual element
+- **Risk heatmap columns** (bottommost layer): full-height vertical bands for each risk period, colored by severity (yellow = low, orange = medium, red = high); each column carries a floating label block showing severity + date range, risk type(s), and risk name — see "Feature Specification — Project Risk Heatmap" for full detail
 - **Capacity band**: a shaded region behind the timeline line representing engineer headcount over time — its height or label changes at each staffing event (e.g., 2 ENG → 6 ENG → 3 ENG). This is a core concept, not decorative.
 - **Main timeline**: solid blue horizontal line
 - **Branch timelines**: dashed lines diverging from the main line, representing adjacent initiatives or priority shifts
@@ -170,6 +175,91 @@ Read-only interactive visualization of a project's timeline.
 - Zoom in / zoom out slider
 - Reset button
 - Download/export button
+
+---
+
+## Feature Specification — Project Risk Heatmap
+
+### Overview
+Each timeline can track multiple named risks, each spanning a date range. Risks are rendered as full-height heatmap columns in the D3 visualization, sitting behind all other content (capacity band, timeline line, event dots). A warning label floats above each risk column.
+
+---
+
+### Risk Data Model
+
+Each risk belongs to a **timeline** and has:
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | User-defined label shown on the visualization (e.g. "External API Check") |
+| `startDate` | date | Start of the risk period |
+| `endDate` | date \| null | End of the risk period; `null` if ongoing |
+| `status` | enum | `Ongoing` or `Completed` |
+| `severity` | enum | `LOW`, `MEDIUM`, `HIGH` |
+| `type` | enum (multi-select) | `RESOURCE`, `DEPENDENCY`, `TECHNICAL`, `SCOPE` — a risk may have more than one type |
+
+---
+
+### Visualization — Risk Heatmap
+
+**Rendering layer**: Risks are drawn behind everything else — behind month markers, capacity band, and timeline line. They should be the bottommost layer in the D3 group stack.
+
+**Column appearance**:
+- Each risk renders as a filled vertical rectangle spanning from the top of the canvas (`y = 0` / `MARGIN.top`) to the bottom edge (`y = height`)
+- X bounds are `xScale(risk.startDate)` → `xScale(risk.endDate ?? today)`
+- Fill color by severity (semi-transparent so underlying content remains legible):
+  - `LOW` → yellow, e.g. `rgba(251, 191, 36, 0.15)` fill, `rgba(251, 191, 36, 0.4)` left/right border strokes
+  - `MEDIUM` → orange, e.g. `rgba(249, 115, 22, 0.15)` fill, `rgba(249, 115, 22, 0.4)` border
+  - `HIGH` → red, e.g. `rgba(239, 68, 68, 0.15)` fill, `rgba(239, 68, 68, 0.4)` border
+- Left and right edges of the column get a 1px vertical stroke in the severity color; no top/bottom stroke
+
+**Label block** (floated above the risk column, near the top of the canvas):
+- Anchored at the horizontal center of the risk column
+- Line 1: Warning triangle icon (SVG path or unicode ⚠) + severity label + date range — e.g. **"Medium Risk Period: Dec–Jan"**
+- Line 2: Risk type(s) in parentheses — e.g. **"(Dependency & Resource)"**
+- Line 3: Risk name (user-defined) — e.g. **"External API Check"**
+- Label text uses the severity color (not muted) so it reads clearly against the light fill
+- If multiple risks overlap in date range, their label blocks **stack vertically** — the second label block sits directly below the first. Each block is offset downward by the height of the previous block plus a small gap.
+- **Hovering a risk label block** shows a tooltip (same `inverse-surface` dark panel style as event tooltips) containing: risk name, severity, type(s), date range, and status.
+
+**Ongoing risk extent**: a risk with no end date and status `Ongoing` has its column extend to **today's date** (same rule as the main timeline line for Ongoing projects).
+
+---
+
+### Timeline Configuration Page — Risk Tab
+
+The main panel of the Timeline Configuration page gains a **tab selector** at the top, switching the panel content between **Events** and **Risks**.
+
+**Tab selector behaviour**:
+- Two tabs: `Events` (default, active on load) and `Risks`
+- Selecting a tab replaces the main panel content; left panel (general config + initial resources) is unchanged
+- Active tab is visually highlighted (same style as the existing active-state patterns in the UI)
+
+**Risks tab — Risk Manager panel**:
+- Subtitle: "Periods of elevated project risk tracked against the timeline."
+- Search bar: "Search risks..."
+- "+ Add Risk" button (same style as "+ Add Event")
+- Risk list/table with one row per risk, inline-editable, with columns:
+  - **Risk Name**: text input (e.g. "External API Check")
+  - **Start Date**: date picker
+  - **End Date**: date picker — leave blank if the risk is ongoing
+  - **Status**: dropdown — `Ongoing` / `Completed`
+  - **Severity**: dropdown — `Low` / `Medium` / `High` — rendered with a colored badge matching the severity color
+  - **Type**: multi-select dropdown — `Resource`, `Dependency`, `Technical`, `Scope` — selected values shown as small chips
+  - **Actions**: save icon, delete icon (same as events row)
+- New risks added via "+ Add Risk" appear as a blank row at the top of the list
+- Deleting a risk removes it immediately from local state; persisted on save
+
+**Save behaviour**: Risks are saved/deleted through the same bottom action bar ("Save Timeline Configuration") that governs events — no separate save action per risk row beyond the row-level save icon.
+
+---
+
+### API Routes — Risks
+
+- `GET /api/timelines/[id]/risks` — list all risks for a timeline
+- `POST /api/timelines/[id]/risks` — create a new risk
+- `PATCH /api/risks/[id]` — update a risk
+- `DELETE /api/risks/[id]` — delete a risk
 
 ---
 

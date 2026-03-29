@@ -59,6 +59,10 @@ This plan covers the full build of **Project Archive**: a historical project tim
       route.ts                → GET list, POST create
     /events/[id]
       route.ts                → PATCH update, DELETE delete
+    /timelines/[id]/risks
+      route.ts                → GET list, POST create
+    /risks/[id]
+      route.ts                → PATCH update, DELETE delete
 
 /components
   /timeline                   → D3 visualization components
@@ -133,9 +137,22 @@ Event
   updatedAt       DateTime
 ```
 
+Risk
+  id          Int       PK
+  name        String    User-defined label shown on the visualization
+  startDate   DateTime  Start of the risk period
+  endDate     DateTime? Null when status is Ongoing; column extends to today in that case
+  status      String    "Ongoing" | "Completed"
+  severity    String    "LOW" | "MEDIUM" | "HIGH"
+  types       String    JSON array stored as text: e.g. '["RESOURCE","DEPENDENCY"]'
+                        Valid values: "RESOURCE" | "DEPENDENCY" | "TECHNICAL" | "SCOPE"
+  timelineId  Int       FK → Timeline (main timeline only — risks belong to the main timeline)
+  createdAt   DateTime
+  updatedAt   DateTime
+
 **Capacity line derivation:** The capacity line is not stored — it is derived at render time from `project.startingHeadcount` + all `STAFFING_CHANGE` events across the main timeline, sorted by date, where `resourceCount` is the new headcount at that point. For REMERGE branch closes, the closing event's `resourceCount` is added back to the running headcount at that date.
 
-**Schema migration needed:** Add `branchCloseMode` enum and field to the `Timeline` model in `prisma/schema.prisma` before running migrations.
+**Schema migration needed:** Add `branchCloseMode` enum and field to the `Timeline` model in `prisma/schema.prisma` before running migrations. Also add the `Risk` model in the same migration pass.
 
 ### API Surface
 
@@ -155,6 +172,10 @@ Event
 | POST | /api/timelines/[id]/events | Create event on a timeline | Timeline config add event |
 | PATCH | /api/events/[id] | Update event fields | Timeline config inline row save |
 | DELETE | /api/events/[id] | Delete event | Timeline config row delete |
+| GET | /api/timelines/[id]/risks | List all risks for a timeline | Timeline config Risks tab, D3 view |
+| POST | /api/timelines/[id]/risks | Create a risk | Timeline config Risks tab add row |
+| PATCH | /api/risks/[id] | Update risk fields | Timeline config Risks tab row save |
+| DELETE | /api/risks/[id] | Delete risk | Timeline config Risks tab row delete |
 
 ### Dependency Map
 
@@ -761,6 +782,288 @@ Apply the remaining DESIGN.md rules that aren't already enforced by components.
 
 ---
 
+---
+
+## Phase 8 — Risk Data Layer
+
+Adds the `Risk` model to the database and exposes CRUD API routes. This phase has no UI dependencies and is self-contained — it must be complete before Phases 9 and 10 can begin.
+
+### Task 8.1 — Prisma Risk Model + Migration
+
+Add the `Risk` model to `prisma/schema.prisma` and generate a migration.
+
+#### Steps
+- Add to `schema.prisma`:
+  ```prisma
+  model Risk {
+    id         Int       @id @default(autoincrement())
+    name       String
+    startDate  DateTime
+    endDate    DateTime?
+    status     String    @default("Ongoing")
+    severity   String    // "LOW" | "MEDIUM" | "HIGH"
+    types      String    // JSON array string: '["RESOURCE","DEPENDENCY"]'
+    timelineId Int
+    timeline   Timeline  @relation(fields: [timelineId], references: [id], onDelete: Cascade)
+    createdAt  DateTime  @default(now())
+    updatedAt  DateTime  @updatedAt
+  }
+  ```
+- Add `risks Risk[]` to the `Timeline` model.
+- Run `npx prisma migrate dev --name add_risk_model`.
+- Regenerate the Prisma client.
+- `types` is stored as a JSON string because SQLite has no native array type. Parse with `JSON.parse(risk.types)` and serialize with `JSON.stringify(types)` at the API boundary.
+
+#### Automated Tests
+- `prisma db push` succeeds with no errors against a fresh SQLite DB.
+- A `Risk` record can be created, read, updated, and deleted via the Prisma client in a test environment.
+- `onDelete: Cascade` — deleting a `Timeline` also deletes its associated risks.
+- Creating a `Risk` with an invalid `timelineId` throws a foreign key constraint error.
+
+#### Test Correctness Checks
+- Cascade test: create a timeline + 2 risks, delete the timeline, assert the risks table has 0 rows for that `timelineId`.
+- The `types` JSON round-trip: write `["RESOURCE","DEPENDENCY"]`, read back and parse — assert the result equals the original array, not a stringified string-of-strings.
+
+---
+
+### Task 8.2 — Risk API Routes
+
+Implement the four risk CRUD endpoints.
+
+#### Steps
+- **`GET /api/timelines/[id]/risks`**: Return all risks for the timeline ordered by `startDate` ascending. Parse `types` from JSON string to array before returning. Return `[]` (not 404) when no risks exist.
+- **`POST /api/timelines/[id]/risks`**: Accept `{ name, startDate, endDate?, status, severity, types[] }`. Validate: `name` required; `startDate` required and valid ISO date; `endDate` must be after `startDate` if provided; `severity` must be one of `LOW | MEDIUM | HIGH`; each `types` value must be one of `RESOURCE | DEPENDENCY | TECHNICAL | SCOPE`; `status` must be `Ongoing` or `Completed`. Serialize `types` array to JSON string before write. Return `201` with created risk (types parsed back to array).
+- **`PATCH /api/risks/[id]`**: Accept partial updates for any field. Apply same validation rules as POST for any provided fields. Return `404` if risk not found. Return updated risk.
+- **`DELETE /api/risks/[id]`**: Return `404` if not found. Return `204` on success.
+
+#### Automated Tests
+- GET returns risks sorted by `startDate` ascending.
+- GET returns `[]` (not 404) when a timeline has no risks.
+- POST creates a risk and returns it with `types` as a parsed array (not a string).
+- POST with missing `name` returns `400`.
+- POST with `endDate` before `startDate` returns `400`.
+- POST with invalid `severity` value returns `400`.
+- POST with an invalid `types` entry returns `400`.
+- PATCH updates only the supplied fields; unsupplied fields remain unchanged.
+- PATCH on a non-existent risk returns `404`.
+- DELETE removes the risk; subsequent GET does not include it.
+- DELETE on a non-existent risk returns `404`.
+
+#### Test Correctness Checks
+- `types` array test: POST with `types: ["RESOURCE","TECHNICAL"]`, then GET — assert the returned `types` field is an array, not a string.
+- Partial PATCH: supply only `severity: "HIGH"`. Assert the `name` field is unchanged in the response.
+- Date validation: supply `startDate: "2024-06-01"`, `endDate: "2024-05-01"` — must return `400`, not silently accept.
+
+#### Risk & Notes
+- SQLite enforces foreign keys only if `PRAGMA foreign_keys = ON` is set. Confirm Prisma's SQLite adapter enables this; if not, the cascade test may pass trivially and miss a real bug.
+
+---
+
+## Phase 9 — Timeline Configuration: Risk Tab
+
+Adds the tab selector and Risks tab to the Timeline Configuration page. Depends on Phase 8 (API routes must exist).
+
+### Task 9.0 — MultiSelect Component (`/components/ui/MultiSelect.tsx`)
+
+A reusable multi-select input for the design system. Build this first within Phase 9 — the Risk Manager table depends on it.
+
+#### Steps
+- Props: `options: { label: string; value: string }[]`, `value: string[]`, `onChange: (values: string[]) => void`, `placeholder?: string`.
+- Trigger button: renders selected values as small chips (pill shape, `rounded-full`, `bg-surface-container-high text-on-surface text-xs`) inside the button, separated by a small gap. When nothing is selected, shows `placeholder` text in `on-surface-variant`.
+- Dropdown panel: opens on trigger click, closes on outside click or `Escape`. Use a `useEffect` click-outside listener. Panel styled with `bg-surface-bright shadow-[0_20px_40px_rgba(25,28,29,0.06)]` per DESIGN.md elevation rules.
+- Each option renders as a row with a checkbox (`checked` when the value is in `value` prop) and a label. Toggling calls `onChange` with the updated array.
+- No search within the dropdown — the type list is short and fixed.
+- Close the dropdown after selection only if all options are selected (i.e., keep it open for multi-pick convenience).
+
+#### Automated Tests
+- Renders with placeholder text when `value` is empty.
+- Renders a chip for each selected value.
+- Clicking the trigger opens the dropdown.
+- Clicking an unchecked option calls `onChange` with that value added.
+- Clicking a checked option calls `onChange` with that value removed.
+- Clicking outside the open dropdown closes it.
+- Pressing `Escape` closes the dropdown.
+
+#### Test Correctness Checks
+- `onChange` value test: start with `value: ["RESOURCE"]`, click "Dependency" — assert `onChange` was called with `["RESOURCE", "DEPENDENCY"]`, not just `["DEPENDENCY"]`.
+- Outside-click: simulate a click on a sibling element outside the component and assert the dropdown is no longer in the DOM.
+
+---
+
+### Task 9.1 — Tab Selector Component
+
+Add a tab selector above the main panel that switches between **Events** and **Risks**.
+
+#### Steps
+- Render two tab buttons at the top of the main panel content area, above the existing events subtitle. Labels: "Events" (default active) and "Risks".
+- Active tab: visually distinguished — use `bg-surface-container-highest text-on-surface` for active, `text-on-surface-variant hover:bg-surface-container` for inactive, matching the pointer/pan toggle button pattern already in `TimelineViewClient`.
+- Tab state is local React state (`useState<'events' | 'risks'>('events')`). No URL parameter needed.
+- When "Events" is active: render the existing Timeline Events Manager content unchanged.
+- When "Risks" is active: render the Risk Manager panel (Task 9.2).
+- The left panel (General Configuration + Initial Resources) is unaffected by the active tab.
+
+#### Automated Tests
+- Tab selector renders with both "Events" and "Risks" labels.
+- "Events" tab is active by default.
+- Clicking "Risks" tab renders the Risk Manager panel.
+- Clicking "Events" tab re-renders the Events Manager panel.
+- The left panel renders regardless of active tab.
+
+#### Test Correctness Checks
+- Default state test: assert that on initial render, the Events Manager is visible and the Risk Manager is not.
+- Tab switch: after clicking "Risks", assert the risk-specific UI (e.g., "+ Add Risk" button) is in the DOM and the events UI is not.
+
+---
+
+### Task 9.2 — Risk Manager Table
+
+The Risks tab content. Inline-editable rows, one per risk, mirroring the events table pattern.
+
+#### Steps
+- Fetch risks for the timeline via `GET /api/timelines/[id]/risks` when the Risks tab is first activated (lazy load — do not fetch on page load).
+- Render panel header: subtitle "Periods of elevated project risk tracked against the timeline." and search bar "Search risks..." filtering rows client-side by risk name.
+- "+ Add Risk" button: appends a blank row at the top of the list with empty fields and status defaulting to "Ongoing". Does not persist until the row-level save icon is clicked.
+- **Table columns:**
+  - **Risk Name**: text `Input` component, bound to `risk.name`.
+  - **Start Date**: date `Input`, bound to `risk.startDate`.
+  - **End Date**: date `Input`, bound to `risk.endDate`. Leave blank for ongoing risks.
+  - **Status**: `Select` dropdown — options: `Ongoing`, `Completed`.
+  - **Severity**: `Select` dropdown — options: `Low`, `Medium`, `High`. Render the selected value with a colored badge: yellow for Low, orange for Medium, red for High (matching the visualization severity colors).
+  - **Type**: multi-select dropdown — options: `Resource`, `Dependency`, `Technical`, `Scope`. Selected values displayed as small chips within the cell. A risk may have one or more types.
+  - **Actions**: save icon (calls `POST` for new rows, `PATCH` for existing), delete icon (calls `DELETE /api/risks/[id]` with a confirm prompt; for unsaved new rows, just removes the local row).
+- Row save: serializes `types` as an array for the API. On POST success, replaces the local blank row with the returned persisted row (which now has an `id`).
+- "Save Timeline Configuration" (bottom action bar) does **not** auto-save risk rows — per-row save is the mechanism. The bottom bar only saves the General Configuration fields (project name, status, dates, headcount).
+
+#### Automated Tests
+- Risk Manager renders one row per fetched risk.
+- Search filters rows by risk name (case-insensitive).
+- "+ Add Risk" appends a blank row without an API call.
+- Saving a new row calls `POST /api/timelines/[id]/risks` with the correct payload.
+- Saving an existing row calls `PATCH /api/risks/[id]`.
+- Severity `Select` shows a colored badge for the selected value.
+- Multi-select type: selecting "Resource" and "Dependency" results in both values being sent in the POST payload's `types` array.
+- Delete icon shows a confirm prompt before the API call.
+- Deleting an unsaved new row removes it from local state without an API call.
+
+#### Test Correctness Checks
+- New row POST payload: assert that `types` in the POST body is a proper array (`["RESOURCE"]`), not a comma-separated string.
+- Severity color: assert the badge element for "High" has the red color class/style, not just that the dropdown shows "High" text.
+- Multi-select: simulate selecting two types, then save — assert the PATCH payload's `types` field contains both values.
+
+#### Risk & Notes
+- Multi-select UI: build a proper `MultiSelect` component in `/components/ui` (see Task 9.0) before implementing this table. With 4 fixed options and chip rendering already established in the design system, the component is straightforward and avoids a future promotion pass.
+- Lazy-loading risks on tab activation avoids a redundant fetch on page load when the user never opens the Risks tab. Ensure the fetch is not re-triggered on every tab switch — cache the result in local state once loaded, and only re-fetch after a successful mutation.
+- Risks belong to the **main timeline only**. Branch timelines do not carry risks. The `timelineId` on a risk always refers to a timeline where `isMain: true`.
+
+---
+
+## Phase 10 — D3 Risk Heatmap Visualization
+
+Renders the risk data onto the timeline visualization. Depends on Phase 8 (API) and can be developed independently of Phase 9 (config UI) as long as seed data exists in the DB.
+
+### Task 10.1 — Fetch Risks and Render Heatmap Columns
+
+Add risks as the bottommost D3 layer in `TimelineViewClient.tsx`.
+
+#### Steps
+- Fetch risks for the main timeline in the server component (`/app/timelines/[id]/view/page.tsx`) alongside the existing timeline + events fetch, and pass as a `risks` prop to `TimelineViewClient`.
+- In `drawTimeline()`, add a `risksG` group **before** `monthMarkersG` (inserted first into `g`) so it sits beneath all other layers.
+- For each risk:
+  - Compute `x1 = xScale(risk.startDate)` and `x2 = xScale(risk.endDate ?? new Date())` (today's date for ongoing risks).
+  - Render a `<rect>` from `y = MARGIN.top` to `y = height` (full canvas height, clipped by `timeline-clip`).
+  - Fill by severity:
+    - `LOW`: `rgba(251, 191, 36, 0.15)` fill
+    - `MEDIUM`: `rgba(249, 115, 22, 0.15)` fill
+    - `HIGH`: `rgba(239, 68, 68, 0.15)` fill
+  - Left edge: a 1px `<line>` from `(x1, MARGIN.top)` to `(x1, height)` in the severity color at 40% opacity.
+  - Right edge: a 1px `<line>` from `(x2, MARGIN.top)` to `(x2, height)` in the severity color at 40% opacity.
+- Risks with no data render nothing (empty `risks` array is a valid state).
+
+#### Automated Tests
+- A risk `<rect>` is rendered for each risk in the props.
+- The rect `x` attribute matches `xScale(risk.startDate)`.
+- An ongoing risk (null `endDate`) renders its right edge at `xScale(today)`.
+- A `LOW` severity risk has a yellow-tinted fill; `HIGH` has a red-tinted fill.
+- Left and right edge lines are rendered for each risk.
+- With zero risks, no risk-related SVG elements are rendered.
+
+#### Test Correctness Checks
+- Severity fill test: query the risk rect's `fill` attribute and assert it contains the expected rgba string for each severity level — not a snapshot match, which could mask color regressions.
+- Ongoing right edge: mock `new Date()` to a fixed date, then assert `x2` equals `xScale(that fixed date)`.
+- Layer order: assert `risksG` appears before `monthMarkersG` in the SVG DOM order.
+
+#### Risk & Notes
+- `new Date()` inside `drawTimeline` means the ongoing column endpoint is evaluated at render time. This is correct and consistent with how the main timeline line handles Ongoing projects. No memoization needed.
+
+---
+
+### Task 10.2 — Risk Label Blocks
+
+Floating label group above each risk column, with vertical stacking for overlapping risks.
+
+#### Steps
+- For each risk, compute the label block anchor: `x = (x1 + x2) / 2` (horizontal center of the column).
+- Label block content (three text lines + icon):
+  - Line 1: ⚠ warning icon (Unicode or a small SVG path at 10px) + severity label + date range — e.g. `"Medium Risk: Dec 2025 – Jan 2026"`. Format dates as `"MMM YYYY"` using `d3.timeFormat`.
+  - Line 2: type(s) in parentheses — e.g. `"(Dependency & Resource)"`. Join multiple types with " & ".
+  - Line 3: risk name — e.g. `"External API Check"`.
+- Label block height is approximately 48px (3 lines × 14px + padding). Use this constant to compute vertical stacking offsets.
+- **Stacking algorithm**: sort risks by `startDate`. For each risk, check if its date range overlaps with any previously rendered risk. If overlap is detected, increment a `stackDepth` counter for that risk. The label block's `y` anchor = `MARGIN.top + 8 + (stackDepth * 52)`. Non-overlapping risks have `stackDepth = 0`.
+- Text styling: severity color for lines 1 and 2, `on-surface` (`#1a1c1e`) for line 3 (the name). Font: `Inter, sans-serif`, 9px for lines 1–2, 10px bold for line 3.
+- Render label blocks after risk rects, inside `risksG`, so they are above the rects but still below month markers.
+
+#### Automated Tests
+- A label group is rendered for each risk.
+- Line 1 text includes the severity word and a formatted date range.
+- Line 2 text includes the risk type(s).
+- Line 3 text equals the risk name.
+- Two overlapping risks produce label blocks at different `y` offsets (stacking).
+- Two non-overlapping risks produce label blocks at the same base `y` offset.
+
+#### Test Correctness Checks
+- Stacking test: create two risks with overlapping date ranges — assert their label group `transform` or `y` attribute values differ by approximately the label block height (48–52px).
+- Non-overlap test: create two risks whose date ranges do not touch — assert both label groups have the same base `y` offset.
+- Type joining: a risk with `types: ["RESOURCE","DEPENDENCY"]` should produce line 2 text `"(Resource & Dependency)"`, not `"(RESOURCE,DEPENDENCY)"` — test the label string directly.
+
+---
+
+### Task 10.3 — Risk Hover Tooltip
+
+Hovering a risk label block or its column shows a detail tooltip.
+
+#### Steps
+- Attach `mouseenter` and `mouseleave` handlers to both the risk `<rect>` and the label group `<g>` for each risk.
+- On `mouseenter`: call `setTooltip` with the risk data and the `mouseEvent.clientX / clientY` coordinates. Cancel any active hide timer (`cancelHide()`).
+- On `mouseleave`: call `scheduleHide()` (the existing 3-second auto-dismiss timer already in `TimelineViewClient`).
+- Extend the `tooltip` state type to accommodate either an `Event` or a `Risk` — use a discriminated union: `{ kind: 'event'; event: Event; x: number; y: number } | { kind: 'risk'; risk: Risk; x: number; y: number }`.
+- In the tooltip JSX, render risk tooltip content when `tooltip.kind === 'risk'`:
+  - Risk name (bold, `font-display`)
+  - Severity badge (colored chip matching severity color)
+  - Type(s) as a comma-separated line
+  - Date range: `"MMM YYYY – MMM YYYY"` or `"MMM YYYY – Ongoing"`
+  - Status label
+- Style: same `fixed z-50 bg-inverse-surface text-surface rounded-lg px-3 py-2 text-xs shadow-lg` as the event tooltip.
+- The 3-second auto-dismiss and persist-while-hovered behaviours are inherited from the existing `scheduleHide` / `cancelHide` pattern — no new timer logic needed.
+
+#### Automated Tests
+- Hovering a risk rect sets tooltip state with `kind: 'risk'` and the correct risk data.
+- Risk tooltip renders the risk name.
+- Risk tooltip renders the severity value.
+- Risk tooltip renders the type(s).
+- Risk tooltip renders the date range in formatted form.
+- Moving the cursor from the risk rect to the tooltip panel does not dismiss the tooltip.
+- Tooltip auto-dismisses 3 seconds after cursor leaves both the rect and the tooltip.
+
+#### Test Correctness Checks
+- `kind` discriminant test: assert that after hovering a risk element, the tooltip state's `kind` field is `"risk"` — not just that *some* tooltip appeared, which could mask the event tooltip being shown instead.
+- Auto-dismiss: use `jest.useFakeTimers()`. Simulate `mouseleave` on the risk rect; advance timers by 2999ms — assert tooltip still visible. Advance by 1ms more — assert tooltip is null.
+
+#### Risk & Notes
+- The tooltip state refactor (adding `kind` discriminant) touches existing event tooltip logic. Ensure existing event tooltip tests still pass after the type change.
+
+---
+
 ## Open Questions
 
-None outstanding.
+- ~~Multi-select component approach~~ → **Resolved**: Build `MultiSelect` as a proper `/components/ui` component in Task 9.0.
+- ~~Risks on branch timelines?~~ → **Resolved**: Risks belong to the main timeline only. Branch timelines never carry risks.
