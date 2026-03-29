@@ -305,13 +305,48 @@ export function TimelineViewClient({
         .attr('fill', 'rgba(91, 141, 217, 0.12)')
         .attr('stroke', 'none');
 
-      // Branch line (dashed)
+      // Branch line
       branchG.append('path')
         .attr('d', `M ${xScale(originDate)} ${TIMELINE_Y} L ${xScale(originDate)} ${branchY} L ${xScale(closeDate)} ${branchY}`)
-        .attr('stroke', '#545e76')
+        .attr('stroke', '#8aaad4')
         .attr('stroke-width', 1.5)
-        .attr('stroke-dasharray', '5,3')
         .attr('fill', 'none');
+
+      // Flow arrows along branch line
+      {
+        const ARROW_INTERVAL = 100;
+        const ARROW_SIZE = 5;
+        const vertLen = TIMELINE_Y - branchY;
+        const horizLen = xScale(closeDate) - ox;
+
+        // Upward arrows on vertical segment
+        const vertCount = Math.floor(vertLen / ARROW_INTERVAL);
+        for (let k = 1; k <= vertCount; k++) {
+          const ay = TIMELINE_Y - (k / (vertCount + 1)) * vertLen;
+          branchG.append('path')
+            .attr('d', `M ${ox - ARROW_SIZE} ${ay + ARROW_SIZE} L ${ox} ${ay - ARROW_SIZE} L ${ox + ARROW_SIZE} ${ay + ARROW_SIZE}`)
+            .attr('stroke', '#8aaad4')
+            .attr('stroke-width', 1.5)
+            .attr('stroke-linecap', 'round')
+            .attr('stroke-linejoin', 'round')
+            .attr('fill', 'none');
+        }
+
+        // Rightward arrows on horizontal segment
+        if (horizLen > ARROW_INTERVAL) {
+          const horizCount = Math.floor(horizLen / ARROW_INTERVAL);
+          for (let k = 1; k <= horizCount; k++) {
+            const ax = ox + (k / (horizCount + 1)) * horizLen;
+            branchG.append('path')
+              .attr('d', `M ${ax - ARROW_SIZE} ${branchY - ARROW_SIZE} L ${ax + ARROW_SIZE} ${branchY} L ${ax - ARROW_SIZE} ${branchY + ARROW_SIZE}`)
+              .attr('stroke', '#8aaad4')
+              .attr('stroke-width', 1.5)
+              .attr('stroke-linecap', 'round')
+              .attr('stroke-linejoin', 'round')
+              .attr('fill', 'none');
+          }
+        }
+      }
 
       // If finished and resources returned: thin blue band + dashed connector back down
       if (finishedEvent?.resourcesReturned) {
@@ -325,10 +360,27 @@ export function TimelineViewClient({
           .attr('stroke', 'none');
         branchG.append('path')
           .attr('d', `M ${cx} ${branchY} L ${cx} ${TIMELINE_Y}`)
-          .attr('stroke', '#545e76')
+          .attr('stroke', '#8aaad4')
           .attr('stroke-width', 1.5)
-          .attr('stroke-dasharray', '5,3')
           .attr('fill', 'none');
+
+        // Downward arrows on return connector
+        {
+          const ARROW_INTERVAL = 100;
+          const ARROW_SIZE = 5;
+          const returnLen = TIMELINE_Y - branchY;
+          const returnCount = Math.floor(returnLen / ARROW_INTERVAL);
+          for (let k = 1; k <= returnCount; k++) {
+            const ay = branchY + (k / (returnCount + 1)) * returnLen;
+            branchG.append('path')
+              .attr('d', `M ${cx - ARROW_SIZE} ${ay - ARROW_SIZE} L ${cx} ${ay + ARROW_SIZE} L ${cx + ARROW_SIZE} ${ay - ARROW_SIZE}`)
+              .attr('stroke', '#8aaad4')
+              .attr('stroke-width', 1.5)
+              .attr('stroke-linecap', 'round')
+              .attr('stroke-linejoin', 'round')
+              .attr('fill', 'none');
+          }
+        }
       }
 
       // End symbol based on conclusion type

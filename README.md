@@ -1,6 +1,6 @@
 # Project Archive
 
-A visual, historical record of a project's lifecycle — capacity, decisions, and impediments plotted as an interactive timeline. Built for non-technical executive audiences who need to understand the realities and challenges of a long-term project at a glance.
+A visual, historical record of a project's lifecycle — capacity, decisions, and impediments plotted as an interactive timeline. Built for non-technical executive audiences who need to understand the realities and challenges of a long-term project at a glance, or project leaders that need to diagnose or review circumstances of a project.
 
 ![Project Timeline View](designs/screenshots/timeline-screen.JPG)
 
