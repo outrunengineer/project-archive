@@ -202,7 +202,14 @@ export function TimelineViewClient({
   const quarterlyStepData = useMemo(() => {
     if (quarterlyCapacities.length === 0) return [];
     return [...quarterlyCapacities]
-      .map((q) => ({ date: fiscalQuarterToDate(q.fiscalYear, q.quarter), headcount: q.totalFte }))
+      .map((q) => ({
+        date: fiscalQuarterToDate(q.fiscalYear, q.quarter),
+        total: q.totalFte,
+        replacement: q.replacementFte,
+        platform: q.platformFte,
+        businessContinuity: q.businessContinuityFte,
+        newWork: q.newFte,
+      }))
       .sort((a, b) => a.date.getTime() - b.date.getTime());
   }, [quarterlyCapacities]);
 
@@ -225,7 +232,7 @@ export function TimelineViewClient({
 
   const globalMaxHeadcount = useMemo(() => {
     const mainMax = quarterlyStepData.length > 0
-      ? Math.max(...quarterlyStepData.map((s) => s.headcount))
+      ? Math.max(...quarterlyStepData.map((s) => s.total))
       : Math.max(...capacitySegments.map((s) => s.headcount), 1);
     return Math.max(
       mainMax,
@@ -360,21 +367,85 @@ export function TimelineViewClient({
 
     /* ─── Capacity Band ─── */
     const capacityG = g.append('g').attr('class', 'capacity-band').attr('clip-path', 'url(#timeline-clip)');
+    const SCALE = CAPACITY_HEIGHT / globalMaxHeadcount;
 
-    // Prefer quarterly FTE data; fall back to event-based segments
-    const activeStepData = quarterlyStepData.length > 0 ? quarterlyStepData : capacitySegments;
+    if (quarterlyStepData.length > 0) {
+      type QStep = typeof quarterlyStepData[0] & { date: Date };
+      const last = quarterlyStepData[quarterlyStepData.length - 1];
+      const stepData: QStep[] = [...quarterlyStepData, { ...last, date: domainEnd }];
 
-    if (activeStepData.length > 0) {
+      // Stacked bands rendered from bottom (TIMELINE_Y) upward
+      // Order: Replacement → Platform → Business Continuity → New
+      const bandDefs: Array<{
+        fill: string;
+        stroke: string;
+        bottom: (d: QStep) => number;
+        top: (d: QStep) => number;
+      }> = [
+        {
+          fill: 'rgba(91, 141, 217, 0.22)',
+          stroke: 'rgba(91, 141, 217, 0.45)',
+          bottom: () => 0,
+          top: (d) => d.replacement,
+        },
+        {
+          fill: 'rgba(249, 115, 22, 0.20)',
+          stroke: 'rgba(249, 115, 22, 0.40)',
+          bottom: (d) => d.replacement,
+          top: (d) => d.replacement + d.platform,
+        },
+        {
+          fill: 'rgba(239, 68, 68, 0.20)',
+          stroke: 'rgba(239, 68, 68, 0.40)',
+          bottom: (d) => d.replacement + d.platform,
+          top: (d) => d.replacement + d.platform + d.businessContinuity,
+        },
+        {
+          fill: 'rgba(34, 197, 94, 0.22)',
+          stroke: 'rgba(34, 197, 94, 0.45)',
+          bottom: (d) => d.replacement + d.platform + d.businessContinuity,
+          top: (d) => d.total,
+        },
+      ];
+
+      bandDefs.forEach(({ fill, stroke, bottom, top }) => {
+        const area = d3.area<QStep>()
+          .x((d) => xScale(d.date))
+          .y0((d) => TIMELINE_Y - bottom(d) * SCALE)
+          .y1((d) => TIMELINE_Y - top(d) * SCALE)
+          .curve(d3.curveStepAfter);
+
+        capacityG.append('path')
+          .datum(stepData)
+          .attr('d', area)
+          .attr('fill', fill)
+          .attr('stroke', stroke)
+          .attr('stroke-width', 0.75);
+      });
+
+      // Headcount annotation at the top of the full band whenever total changes
+      quarterlyStepData.forEach((seg, i) => {
+        if (i === 0 || seg.total !== quarterlyStepData[i - 1].total) {
+          capacityG.append('text')
+            .attr('x', xScale(seg.date) + 4)
+            .attr('y', TIMELINE_Y - seg.total * SCALE - 4)
+            .attr('font-size', '10px')
+            .attr('fill', '#5b8dd9')
+            .attr('font-family', 'Inter, sans-serif')
+            .text(`${seg.total} ENG.`);
+        }
+      });
+    } else if (capacitySegments.length > 0) {
+      // Fallback: single blue band derived from staffing events
       const capacityArea = d3.area<{ date: Date; headcount: number }>()
         .x((d) => xScale(d.date))
         .y0((d) => TIMELINE_Y + (d.headcount / globalMaxHeadcount) * CAPACITY_HEIGHT / 2)
         .y1((d) => TIMELINE_Y - (d.headcount / globalMaxHeadcount) * CAPACITY_HEIGHT / 2)
         .curve(d3.curveStepAfter);
 
-      // Extend last step to domain end so the band doesn't terminate abruptly
       const stepData = [
-        ...activeStepData,
-        { date: domainEnd, headcount: activeStepData[activeStepData.length - 1].headcount },
+        ...capacitySegments,
+        { date: domainEnd, headcount: capacitySegments[capacitySegments.length - 1].headcount },
       ];
 
       capacityG.append('path')
@@ -384,9 +455,8 @@ export function TimelineViewClient({
         .attr('stroke', 'rgba(91, 141, 217, 0.3)')
         .attr('stroke-width', 1);
 
-      // Headcount annotations — show whenever value changes
-      activeStepData.forEach((seg, i) => {
-        if (i === 0 || seg.headcount !== activeStepData[i - 1].headcount) {
+      capacitySegments.forEach((seg, i) => {
+        if (i === 0 || seg.headcount !== capacitySegments[i - 1].headcount) {
           capacityG.append('text')
             .attr('x', xScale(seg.date) + 4)
             .attr('y', TIMELINE_Y - (seg.headcount / globalMaxHeadcount) * CAPACITY_HEIGHT / 2 - 4)
@@ -436,12 +506,6 @@ export function TimelineViewClient({
       .attr('y2', TIMELINE_Y)
       .attr('stroke', '#5b8dd9')
       .attr('stroke-width', 2);
-
-    // Star marker at project start date
-    lineG.append('path')
-      .attr('d', d3.symbol(d3.symbolStar, 64)())
-      .attr('transform', `translate(${xScale(startDate)}, ${TIMELINE_Y})`)
-      .attr('fill', '#5b8dd9');
 
     // Today indicator — only for Ongoing projects
     if (project.status === 'Ongoing') {
@@ -938,6 +1002,27 @@ export function TimelineViewClient({
         >
           <RotateCcw className="w-4 h-4" />
         </button>
+        {quarterlyCapacities.length > 0 && (
+          <>
+            <div className="w-px h-5 bg-outline-variant mx-1" />
+            <div className="flex items-center gap-3">
+              {[
+                { color: 'rgba(91,141,217,0.55)',  label: 'Replacement' },
+                { color: 'rgba(249,115,22,0.50)',  label: 'Platform' },
+                { color: 'rgba(239,68,68,0.50)',   label: 'Business Continuity' },
+                { color: 'rgba(34,197,94,0.55)',   label: 'New' },
+              ].map(({ color, label }) => (
+                <div key={label} className="flex items-center gap-1.5">
+                  <span
+                    className="inline-block w-3 h-3 rounded-sm shrink-0"
+                    style={{ backgroundColor: color }}
+                  />
+                  <span className="text-xs text-on-surface-variant">{label}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
         <div className="flex-1" />
         <button
           onClick={handleDownload}
