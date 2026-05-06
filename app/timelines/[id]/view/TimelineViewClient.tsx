@@ -41,6 +41,18 @@ type Risk = {
   timelineId: number;
 };
 
+type QuarterlyCapacity = {
+  id: number;
+  fiscalYear: number;
+  quarter: string;
+  totalFte: number;
+  platformFte: number;
+  replacementFte: number;
+  newFte: number;
+  businessContinuityFte: number;
+  timelineId: number;
+};
+
 type Timeline = {
   id: number;
   name: string;
@@ -98,6 +110,17 @@ const EVENT_TYPE_LABEL: Record<string, string> = {
   FINISHED: 'Finished',
 };
 
+// Converts a QuarterlyCapacity record's FY + quarter into the fiscal quarter's start date
+function fiscalQuarterToDate(fiscalYear: number, quarter: string): Date {
+  switch (quarter) {
+    case 'Q1': return new Date(fiscalYear - 1, 10, 1);  // Nov 1 of prior calendar year
+    case 'Q2': return new Date(fiscalYear, 2, 1);        // Mar 1
+    case 'Q3': return new Date(fiscalYear, 4, 15);       // May 15
+    case 'Q4': return new Date(fiscalYear, 7, 15);       // Aug 15
+    default:   return new Date(fiscalYear, 0, 1);
+  }
+}
+
 // Fiscal year quarters: Q1=Nov1–Feb28, Q2=Mar1–May14, Q3=May15–Aug14, Q4=Aug15–Oct31
 // FY number = the calendar year that Q2–Q4 fall in (e.g. Nov 1 2025 → Q1 FY26)
 function getFiscalQuarters(start: Date, end: Date): Array<{ date: Date; label: string }> {
@@ -121,11 +144,13 @@ export function TimelineViewClient({
   branches,
   updatedAt,
   risks,
+  quarterlyCapacities,
 }: {
   timeline: Timeline;
   branches: Branch[];
   updatedAt: string;
   risks: Risk[];
+  quarterlyCapacities: QuarterlyCapacity[];
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -173,6 +198,14 @@ export function TimelineViewClient({
   const domainStart = useMemo(() => new Date(startDate.getTime() - 30 * 86400000), [startDate]);
   const domainEnd = useMemo(() => new Date(timelineEnd.getTime() + 30 * 86400000), [timelineEnd]);
 
+  // Build step data from quarterly FTE records; fall back to event-based segments if no data
+  const quarterlyStepData = useMemo(() => {
+    if (quarterlyCapacities.length === 0) return [];
+    return [...quarterlyCapacities]
+      .map((q) => ({ date: fiscalQuarterToDate(q.fiscalYear, q.quarter), headcount: q.totalFte }))
+      .sort((a, b) => a.date.getTime() - b.date.getTime());
+  }, [quarterlyCapacities]);
+
   const capacitySegments = useMemo(() =>
     deriveCapacitySegments(project.startingHeadcount, allMainEvents, project.startDate),
   [project.startingHeadcount, allMainEvents, project.startDate]);
@@ -190,13 +223,16 @@ export function TimelineViewClient({
     }),
   [branches]);
 
-  const globalMaxHeadcount = useMemo(() =>
-    Math.max(
-      ...capacitySegments.map((s) => s.headcount),
+  const globalMaxHeadcount = useMemo(() => {
+    const mainMax = quarterlyStepData.length > 0
+      ? Math.max(...quarterlyStepData.map((s) => s.headcount))
+      : Math.max(...capacitySegments.map((s) => s.headcount), 1);
+    return Math.max(
+      mainMax,
       ...branchCapacitySegments.flat().map((s) => s.headcount),
       1,
-    ),
-  [capacitySegments, branchCapacitySegments]);
+    );
+  }, [quarterlyStepData, capacitySegments, branchCapacitySegments]);
 
   const drawTimeline = useCallback(() => {
     const svg = svgRef.current;
@@ -325,17 +361,20 @@ export function TimelineViewClient({
     /* ─── Capacity Band ─── */
     const capacityG = g.append('g').attr('class', 'capacity-band').attr('clip-path', 'url(#timeline-clip)');
 
-    if (capacitySegments.length > 0) {
+    // Prefer quarterly FTE data; fall back to event-based segments
+    const activeStepData = quarterlyStepData.length > 0 ? quarterlyStepData : capacitySegments;
+
+    if (activeStepData.length > 0) {
       const capacityArea = d3.area<{ date: Date; headcount: number }>()
         .x((d) => xScale(d.date))
         .y0((d) => TIMELINE_Y + (d.headcount / globalMaxHeadcount) * CAPACITY_HEIGHT / 2)
         .y1((d) => TIMELINE_Y - (d.headcount / globalMaxHeadcount) * CAPACITY_HEIGHT / 2)
         .curve(d3.curveStepAfter);
 
-      // Build step data: extend last segment to end date
+      // Extend last step to domain end so the band doesn't terminate abruptly
       const stepData = [
-        ...capacitySegments,
-        { date: domainEnd, headcount: capacitySegments[capacitySegments.length - 1].headcount },
+        ...activeStepData,
+        { date: domainEnd, headcount: activeStepData[activeStepData.length - 1].headcount },
       ];
 
       capacityG.append('path')
@@ -345,9 +384,9 @@ export function TimelineViewClient({
         .attr('stroke', 'rgba(91, 141, 217, 0.3)')
         .attr('stroke-width', 1);
 
-      // Headcount annotations
-      capacitySegments.forEach((seg, i) => {
-        if (i === 0 || seg.headcount !== capacitySegments[i - 1].headcount) {
+      // Headcount annotations — show whenever value changes
+      activeStepData.forEach((seg, i) => {
+        if (i === 0 || seg.headcount !== activeStepData[i - 1].headcount) {
           capacityG.append('text')
             .attr('x', xScale(seg.date) + 4)
             .attr('y', TIMELINE_Y - (seg.headcount / globalMaxHeadcount) * CAPACITY_HEIGHT / 2 - 4)

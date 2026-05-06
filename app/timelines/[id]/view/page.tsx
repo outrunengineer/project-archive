@@ -36,6 +36,12 @@ export default async function ProjectTimelinePage({ params }: Props) {
       })
     : [];
 
+  // Fetch quarterly FTE capacity data
+  const quarterlyCapacities = await prisma.quarterlyCapacity.findMany({
+    where: { timelineId: Number(id) },
+    orderBy: [{ fiscalYear: 'asc' }, { quarter: 'asc' }],
+  });
+
   const serialize = (obj: object) =>
     JSON.parse(JSON.stringify(obj, (_, v) => (v instanceof Date ? v.toISOString() : v)));
 
@@ -51,6 +57,7 @@ export default async function ProjectTimelinePage({ params }: Props) {
       branches={serialize(siblings)}
       updatedAt={new Date(updatedAt).toISOString()}
       risks={serialize(risks.map((r) => ({ ...r, types: JSON.parse(r.types) as string[] })))}
+      quarterlyCapacities={serialize(quarterlyCapacities)}
     />
   );
 }
