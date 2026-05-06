@@ -105,7 +105,7 @@ const SENTIMENT_COLOR: Record<string, string> = {
 const WORK_TYPE_COLOR: Record<string, string> = {
   Replacement:        'rgba(91,141,217,0.9)',
   Platform:           'rgba(249,115,22,0.9)',
-  BusinessContinuity: 'rgba(239,68,68,0.9)',
+  BusinessContinuity: 'rgba(147,51,234,0.9)',
   New:                'rgba(34,197,94,0.9)',
   'Replacement/New':  'rgba(91,141,217,0.75)',
 };
@@ -130,6 +130,8 @@ function fiscalQuarterToDate(fiscalYear: number, quarter: string): Date {
     default:   return new Date(fiscalYear, 0, 1);
   }
 }
+
+const IMPEDIMENT_COLOR = '#b91c1c';
 
 // Fiscal year quarters: Q1=Nov1–Feb28, Q2=Mar1–May14, Q3=May15–Aug14, Q4=Aug15–Oct31
 // FY number = the calendar year that Q2–Q4 fall in (e.g. Nov 1 2025 → Q1 FY26)
@@ -405,8 +407,8 @@ export function TimelineViewClient({
           top: (d) => d.replacement + d.platform,
         },
         {
-          fill: 'rgba(239, 68, 68, 0.20)',
-          stroke: 'rgba(239, 68, 68, 0.40)',
+          fill: 'rgba(147, 51, 234, 0.20)',
+          stroke: 'rgba(147, 51, 234, 0.40)',
           bottom: (d) => d.replacement + d.platform,
           top: (d) => d.replacement + d.platform + d.businessContinuity,
         },
@@ -916,28 +918,31 @@ export function TimelineViewClient({
       const lineY1 = above ? TIMELINE_Y - 8 : TIMELINE_Y + 8;
       const lineY2 = labelY;
 
+      // Connector color — shared by connector line and type label
+      const connectorColor = event.type === 'IMPEDIMENT'
+        ? IMPEDIMENT_COLOR
+        : event.type === 'DELIVERABLE' && event.workType
+          ? WORK_TYPE_COLOR[event.workType] ?? 'rgba(68,71,76,0.3)'
+          : 'rgba(68,71,76,0.3)';
+
       // Connector tick
       eventsG.append('line')
         .attr('x1', x).attr('x2', x)
         .attr('y1', lineY1).attr('y2', lineY2)
-        .attr('stroke', event.type === 'DELIVERABLE' && event.workType
-          ? WORK_TYPE_COLOR[event.workType] ?? 'rgba(68,71,76,0.3)'
-          : 'rgba(68,71,76,0.3)')
+        .attr('stroke', connectorColor)
         .attr('stroke-width', 1);
 
       // Label group
       const labelG = eventsG.append('g')
         .attr('transform', `translate(${x}, ${labelY})`);
 
-      // Event type label
+      // Event type label — dark red for impediments
       const typeOffsetY = above ? -(nameLines.length * LINE_H + 2) : 0;
       labelG.append('text')
         .attr('text-anchor', 'middle')
         .attr('y', typeOffsetY)
         .attr('font-size', '6px')
-        .attr('fill', event.type === 'DELIVERABLE' && event.workType
-          ? WORK_TYPE_COLOR[event.workType] ?? '#44474c'
-          : '#44474c')
+        .attr('fill', connectorColor)
         .attr('font-family', 'Inter, sans-serif')
         .attr('letter-spacing', '0.05em')
         .text(EVENT_TYPE_LABEL[event.type] ?? event.type);
@@ -960,7 +965,7 @@ export function TimelineViewClient({
           .text(line);
       });
 
-      // Dot or star
+      // Marker: star for deliverables, stop sign for impediments, circle otherwise
       if (event.type === 'DELIVERABLE' && event.workType) {
         const starColor = WORK_TYPE_COLOR[event.workType] ?? '#9aa3af';
         eventsG.append('path')
@@ -968,6 +973,20 @@ export function TimelineViewClient({
           .attr('transform', `translate(${x}, ${TIMELINE_Y})`)
           .attr('fill', starColor)
           .attr('stroke', 'none')
+          .style('cursor', 'pointer')
+          .on('mouseenter', (mouseEvent: MouseEvent) => {
+            cancelHide();
+            setTooltip({ kind: 'event', event, x: mouseEvent.clientX, y: mouseEvent.clientY });
+          })
+          .on('mouseleave', () => scheduleHide());
+      } else if (event.type === 'IMPEDIMENT') {
+        eventsG.append('text')
+          .attr('x', x)
+          .attr('y', TIMELINE_Y)
+          .attr('text-anchor', 'middle')
+          .attr('dominant-baseline', 'central')
+          .attr('font-size', '13px')
+          .text('🛑')
           .style('cursor', 'pointer')
           .on('mouseenter', (mouseEvent: MouseEvent) => {
             cancelHide();
@@ -1138,7 +1157,7 @@ export function TimelineViewClient({
               {[
                 { color: 'rgba(91,141,217,0.55)',  label: 'Replacement' },
                 { color: 'rgba(249,115,22,0.50)',  label: 'Platform' },
-                { color: 'rgba(239,68,68,0.50)',   label: 'Business Continuity' },
+                { color: 'rgba(147,51,234,0.50)',  label: 'Business Continuity' },
                 { color: 'rgba(34,197,94,0.55)',   label: 'New' },
               ].map(({ color, label }) => (
                 <div key={label} className="flex items-center gap-1.5">
