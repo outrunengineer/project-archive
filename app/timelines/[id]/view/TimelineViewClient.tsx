@@ -500,7 +500,7 @@ export function TimelineViewClient({
           .attr('y', TIMELINE_Y + CAPACITY_HEIGHT / 2 + 27)
           .attr('font-size', '10px')
           .attr('font-weight', '600')
-          .attr('fill', 'rgba(68,71,76,0.5)')
+          .attr('fill', '#4b5563')
           .attr('font-family', 'Inter, sans-serif')
           .text(d3.timeFormat('%Y')(month));
       }
@@ -514,7 +514,7 @@ export function TimelineViewClient({
       .attr('x2', xScale(timelineEnd))
       .attr('y1', TIMELINE_Y)
       .attr('y2', TIMELINE_Y)
-      .attr('stroke', '#5b8dd9')
+      .attr('stroke', '#4b5563')
       .attr('stroke-width', 2);
 
     // Today indicator — only for Ongoing projects
@@ -525,7 +525,7 @@ export function TimelineViewClient({
         .attr('cy', TIMELINE_Y)
         .attr('r', 7)
         .attr('fill', 'none')
-        .attr('stroke', '#5b8dd9')
+        .attr('stroke', '#4b5563')
         .attr('stroke-width', 2);
       lineG.append('text')
         .attr('x', todayX)
@@ -549,7 +549,7 @@ export function TimelineViewClient({
       fqG.append('line')
         .attr('x1', x).attr('x2', x)
         .attr('y1', TIMELINE_Y + 3).attr('y2', TIMELINE_Y + 14)
-        .attr('stroke', 'rgba(91,141,217,0.55)')
+        .attr('stroke', 'rgba(180,180,180,0.9)')
         .attr('stroke-width', 1.5)
         .attr('stroke-linecap', 'round');
       // Quarter label
@@ -559,7 +559,7 @@ export function TimelineViewClient({
         .attr('text-anchor', 'middle')
         .attr('font-size', '9px')
         .attr('font-weight', '700')
-        .attr('fill', 'rgba(91,141,217,0.65)')
+        .attr('fill', 'rgba(160,160,160,0.9)')
         .attr('font-family', 'Inter, sans-serif')
         .attr('letter-spacing', '0.05em')
         .text(label);
@@ -811,13 +811,110 @@ export function TimelineViewClient({
     /* ─── Main Event Dots & Labels ─── */
     const eventsG = g.append('g').attr('clip-path', 'url(#timeline-clip)');
 
+    // Dynamic label placement: track placed bounding boxes per side to avoid overlap
+    const LABEL_HW = 58;   // approx half-width of a label (~116px total at 7px font)
+    const LABEL_STEP = 28; // px to push further out when a collision is found
+    const LABEL_MIN_DIST = 14; // minimum distance from timeline line to label anchor
+    const LINE_H = 9;          // px per line of the name text
+    const MAX_CHARS = 20;      // max chars per wrapped line (word boundary)
+
+    // Break a string into lines of at most MAX_CHARS, splitting at word boundaries
+    function wrapWords(text: string): string[] {
+      const words = text.split(' ');
+      const lines: string[] = [];
+      let current = '';
+      for (const word of words) {
+        if ((current ? current + ' ' + word : word).length <= MAX_CHARS) {
+          current = current ? current + ' ' + word : word;
+        } else {
+          if (current) lines.push(current);
+          current = word;
+        }
+      }
+      if (current) lines.push(current);
+      return lines;
+    }
+
+    // placedAbove/placedBelow track bounding boxes; lineCount adjusts the box height
+    const placedAbove: Array<{ x1: number; x2: number; y1: number; y2: number }> = [];
+
+    // Pre-seed placedBelow with the January year marker bounding boxes so event
+    // labels pushed below the line never land on top of them.
+    const yearMarkerY = TIMELINE_Y + CAPACITY_HEIGHT / 2 + 27;
+    const placedBelow: Array<{ x1: number; x2: number; y1: number; y2: number }> =
+      d3.timeMonth.range(domainStart, domainEnd)
+        .filter((m) => m.getMonth() === 0)
+        .map((m) => {
+          const mx = xScale(m);
+          return { x1: mx, x2: mx + 36, y1: yearMarkerY - 11, y2: yearMarkerY + 3 };
+        });
+
+    function placeLabelY(x: number, above: boolean, lineCount: number): number {
+      const placed = above ? placedAbove : placedBelow;
+      const boxH = 8 + lineCount * LINE_H; // type label (8px) + name lines
+      let dist = LABEL_MIN_DIST + boxH;
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const anchorY = above ? TIMELINE_Y - dist : TIMELINE_Y + dist;
+        const y1 = above ? anchorY - boxH : anchorY;
+        const y2 = above ? anchorY       : anchorY + boxH;
+        const x1 = x - LABEL_HW;
+        const x2 = x + LABEL_HW;
+        const overlaps = placed.some(
+          (p) => x2 > p.x1 && x1 < p.x2 && y2 > p.y1 && y1 < p.y2
+        );
+        if (!overlaps) {
+          placed.push({ x1, x2, y1, y2 });
+          return anchorY;
+        }
+        dist += LABEL_STEP;
+      }
+      const anchorY = above ? TIMELINE_Y - dist : TIMELINE_Y + dist;
+      const y1 = above ? anchorY - boxH : anchorY;
+      const y2 = above ? anchorY : anchorY + boxH;
+      placed.push({ x1: x - LABEL_HW, x2: x + LABEL_HW, y1, y2 });
+      return anchorY;
+    }
+
+    // Pre-compute spread x positions: group events by year+month, then
+    // distribute same-month events evenly across that month's pixel span.
+    const monthKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`;
+    const monthGroups = new Map<string, number[]>();
+    allMainEvents.forEach((_, i) => {
+      const d = new Date(allMainEvents[i].date);
+      const key = monthKey(d);
+      if (!monthGroups.has(key)) monthGroups.set(key, []);
+      monthGroups.get(key)!.push(i);
+    });
+    // Build a lookup: event index → spread x pixel
+    const spreadX = new Array(allMainEvents.length);
+    monthGroups.forEach((indices) => {
+      if (indices.length === 1) {
+        const d = new Date(allMainEvents[indices[0]].date);
+        spreadX[indices[0]] = xScale(d);
+        return;
+      }
+      // Spread across 80% of the month's pixel width, centred on the month midpoint
+      const d0 = new Date(allMainEvents[indices[0]].date);
+      const monthStart = new Date(d0.getFullYear(), d0.getMonth(), 1);
+      const monthEnd   = new Date(d0.getFullYear(), d0.getMonth() + 1, 0);
+      const pxStart = xScale(monthStart);
+      const pxEnd   = xScale(monthEnd);
+      const pxSpan  = (pxEnd - pxStart) * 0.8;
+      const pxLeft  = pxStart + (pxEnd - pxStart) * 0.1;
+      indices.forEach((idx, j) => {
+        const t = indices.length === 1 ? 0.5 : j / (indices.length - 1);
+        spreadX[idx] = pxLeft + t * pxSpan;
+      });
+    });
+
     allMainEvents.forEach((event, i) => {
-      const x = xScale(new Date(event.date));
+      const x = spreadX[i];
       const color = SENTIMENT_COLOR[event.impactSentiment] ?? '#9aa3af';
       const above = i % 2 === 0;
-      const labelY = above ? TIMELINE_Y - 100 : TIMELINE_Y + 100;
+      const nameLines = wrapWords(event.name);
+      const labelY = placeLabelY(x, above, nameLines.length);
       const lineY1 = above ? TIMELINE_Y - 8 : TIMELINE_Y + 8;
-      const lineY2 = above ? TIMELINE_Y - 100 : TIMELINE_Y + 100;
+      const lineY2 = labelY;
 
       // Connector tick
       eventsG.append('line')
@@ -832,37 +929,42 @@ export function TimelineViewClient({
       const labelG = eventsG.append('g')
         .attr('transform', `translate(${x}, ${labelY})`);
 
+      // Event type label
+      const typeOffsetY = above ? -(nameLines.length * LINE_H + 2) : 0;
       labelG.append('text')
         .attr('text-anchor', 'middle')
-        .attr('y', above ? -14 : 0)
-        .attr('font-size', '9px')
-        .attr('fill', '#44474c')
+        .attr('y', typeOffsetY)
+        .attr('font-size', '6px')
+        .attr('fill', event.type === 'DELIVERABLE' && event.workType
+          ? WORK_TYPE_COLOR[event.workType] ?? '#44474c'
+          : '#44474c')
         .attr('font-family', 'Inter, sans-serif')
         .attr('letter-spacing', '0.05em')
         .text(EVENT_TYPE_LABEL[event.type] ?? event.type);
 
-      labelG.append('text')
+      // Event name — word-wrapped tspans
+      const nameEl = labelG.append('text')
         .attr('text-anchor', 'middle')
-        .attr('y', above ? -3 : 11)
-        .attr('font-size', '11px')
+        .attr('font-size', '7px')
         .attr('font-weight', '600')
         .attr('fill', '#1a1c1e')
-        .attr('font-family', 'Manrope, sans-serif')
-        .text(event.name.length > 18 ? event.name.slice(0, 18) + '…' : event.name);
+        .attr('font-family', 'Manrope, sans-serif');
 
-      labelG.append('text')
-        .attr('text-anchor', 'middle')
-        .attr('y', above ? 8 : 22)
-        .attr('font-size', '9px')
-        .attr('fill', '#9aa3af')
-        .attr('font-family', 'Inter, sans-serif')
-        .text(formatDate(event.date));
+      nameLines.forEach((line, li) => {
+        const baseY = above
+          ? -(nameLines.length - 1 - li) * LINE_H
+          : LINE_H + li * LINE_H;
+        nameEl.append('tspan')
+          .attr('x', 0)
+          .attr('y', baseY)
+          .text(line);
+      });
 
       // Dot or star
       if (event.type === 'DELIVERABLE' && event.workType) {
         const starColor = WORK_TYPE_COLOR[event.workType] ?? '#9aa3af';
         eventsG.append('path')
-          .attr('d', d3.symbol(d3.symbolStar, 48)())
+          .attr('d', d3.symbol(d3.symbolStar, 20)())
           .attr('transform', `translate(${x}, ${TIMELINE_Y})`)
           .attr('fill', starColor)
           .attr('stroke', 'none')
