@@ -172,6 +172,27 @@ export function TimelineViewClient({
   const panModeRef = useRef(panMode);
   useEffect(() => { panModeRef.current = panMode; }, [panMode]);
   const [zoomLevel, setZoomLevel] = useState(1);
+  const [hiddenWorkTypes, setHiddenWorkTypes] = useState<Set<string>>(new Set());
+
+  function toggleWorkType(label: string) {
+    setHiddenWorkTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  }
+
+  const [hiddenEventTypes, setHiddenEventTypes] = useState<Set<string>>(new Set());
+
+  function toggleEventType(type: string) {
+    setHiddenEventTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  }
   const [tooltip, setTooltip] = useState<
     | { kind: 'event'; event: Event; x: number; y: number }
     | { kind: 'risk'; risk: Risk; x: number; y: number }
@@ -480,33 +501,30 @@ export function TimelineViewClient({
       });
     }
 
-    /* ─── Month Markers ─── */
-    const monthMarkersG = g.append('g')
-      .attr('class', 'month-markers')
+    /* ─── Year Markers ─── */
+    const yearMarkersG = g.append('g')
+      .attr('class', 'year-markers')
       .attr('clip-path', 'url(#timeline-clip)');
 
-    d3.timeMonth.range(domainStart, domainEnd).forEach((month) => {
-      const x = xScale(month);
-      const isJanuary = month.getMonth() === 0;
-
-      monthMarkersG.append('line')
-        .attr('x1', x).attr('x2', x)
-        .attr('y1', MARGIN.top)
-        .attr('y2', height)
-        .attr('stroke', isJanuary ? 'rgba(68,71,76,0.2)' : 'rgba(68,71,76,0.1)')
-        .attr('stroke-width', isJanuary ? 1.5 : 1);
-
-      if (isJanuary) {
-        monthMarkersG.append('text')
+    d3.timeMonth.range(domainStart, domainEnd)
+      .filter((m) => m.getMonth() === 0)
+      .forEach((jan) => {
+        const x = xScale(jan);
+        yearMarkersG.append('line')
+          .attr('x1', x).attr('x2', x)
+          .attr('y1', MARGIN.top)
+          .attr('y2', height)
+          .attr('stroke', 'rgba(68,71,76,0.2)')
+          .attr('stroke-width', 1.5);
+        yearMarkersG.append('text')
           .attr('x', x + 4)
-          .attr('y', TIMELINE_Y + CAPACITY_HEIGHT / 2 + 27)
+          .attr('y', MARGIN.top + 11)
           .attr('font-size', '10px')
           .attr('font-weight', '600')
-          .attr('fill', '#4b5563')
+          .attr('fill', 'rgba(68,71,76,0.45)')
           .attr('font-family', 'Inter, sans-serif')
-          .text(d3.timeFormat('%Y')(month));
-      }
-    });
+          .text(d3.timeFormat('%Y')(jan));
+      });
 
     /* ─── Main Timeline Line ─── */
     const lineG = g.append('g').attr('clip-path', 'url(#timeline-clip)');
@@ -839,22 +857,15 @@ export function TimelineViewClient({
 
     // placedAbove/placedBelow track bounding boxes; lineCount adjusts the box height
     const placedAbove: Array<{ x1: number; x2: number; y1: number; y2: number }> = [];
-
-    // Pre-seed placedBelow with the January year marker bounding boxes so event
-    // labels pushed below the line never land on top of them.
-    const yearMarkerY = TIMELINE_Y + CAPACITY_HEIGHT / 2 + 27;
-    const placedBelow: Array<{ x1: number; x2: number; y1: number; y2: number }> =
-      d3.timeMonth.range(domainStart, domainEnd)
-        .filter((m) => m.getMonth() === 0)
-        .map((m) => {
-          const mx = xScale(m);
-          return { x1: mx, x2: mx + 36, y1: yearMarkerY - 11, y2: yearMarkerY + 3 };
-        });
+    const placedBelow: Array<{ x1: number; x2: number; y1: number; y2: number }> = [];
 
     function placeLabelY(x: number, above: boolean, lineCount: number): number {
       const placed = above ? placedAbove : placedBelow;
       const boxH = 8 + lineCount * LINE_H; // type label (8px) + name lines
-      let dist = LABEL_MIN_DIST + boxH;
+      // Above-labels must clear the capacity band (CAPACITY_HEIGHT) plus FTE
+      // annotation text (~14px above the band top), so add a generous buffer.
+      const minDist = above ? CAPACITY_HEIGHT + 24 : LABEL_MIN_DIST;
+      let dist = minDist + boxH;
       for (let attempt = 0; attempt < 40; attempt++) {
         const anchorY = above ? TIMELINE_Y - dist : TIMELINE_Y + dist;
         const y1 = above ? anchorY - boxH : anchorY;
@@ -879,24 +890,29 @@ export function TimelineViewClient({
 
     // Pre-compute spread x positions: group events by year+month, then
     // distribute same-month events evenly across that month's pixel span.
+    // Filter out events whose workType is currently hidden.
+    const visibleEvents = allMainEvents.filter((ev) =>
+      !hiddenWorkTypes.has(ev.workType ?? '__none__') &&
+      !hiddenEventTypes.has(ev.type)
+    );
     const monthKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`;
     const monthGroups = new Map<string, number[]>();
-    allMainEvents.forEach((_, i) => {
-      const d = new Date(allMainEvents[i].date);
+    visibleEvents.forEach((_, i) => {
+      const d = new Date(visibleEvents[i].date);
       const key = monthKey(d);
       if (!monthGroups.has(key)) monthGroups.set(key, []);
       monthGroups.get(key)!.push(i);
     });
     // Build a lookup: event index → spread x pixel
-    const spreadX = new Array(allMainEvents.length);
+    const spreadX = new Array(visibleEvents.length);
     monthGroups.forEach((indices) => {
       if (indices.length === 1) {
-        const d = new Date(allMainEvents[indices[0]].date);
+        const d = new Date(visibleEvents[indices[0]].date);
         spreadX[indices[0]] = xScale(d);
         return;
       }
       // Spread across 80% of the month's pixel width, centred on the month midpoint
-      const d0 = new Date(allMainEvents[indices[0]].date);
+      const d0 = new Date(visibleEvents[indices[0]].date);
       const monthStart = new Date(d0.getFullYear(), d0.getMonth(), 1);
       const monthEnd   = new Date(d0.getFullYear(), d0.getMonth() + 1, 0);
       const pxStart = xScale(monthStart);
@@ -909,7 +925,7 @@ export function TimelineViewClient({
       });
     });
 
-    allMainEvents.forEach((event, i) => {
+    visibleEvents.forEach((event, i) => {
       const x = spreadX[i];
       const color = SENTIMENT_COLOR[event.impactSentiment] ?? '#9aa3af';
       const above = i % 2 === 0;
@@ -1026,7 +1042,7 @@ export function TimelineViewClient({
 
     zoomRef.current = zoom;
     d3.select(svg).call(zoom);
-  }, [allMainEvents, branches, capacitySegments, domainStart, domainEnd, globalMaxHeadcount, branchCapacitySegments, startDate, timelineEnd, cancelHide, scheduleHide, risks]);
+  }, [allMainEvents, branches, capacitySegments, domainStart, domainEnd, globalMaxHeadcount, branchCapacitySegments, startDate, timelineEnd, cancelHide, scheduleHide, risks, hiddenWorkTypes, hiddenEventTypes]);
 
   useEffect(() => {
     drawTimeline();
@@ -1153,24 +1169,67 @@ export function TimelineViewClient({
         {quarterlyCapacities.length > 0 && (
           <>
             <div className="w-px h-5 bg-outline-variant mx-1" />
-            <div className="flex items-center gap-3">
-              {[
-                { color: 'rgba(91,141,217,0.55)',  label: 'Replacement' },
-                { color: 'rgba(249,115,22,0.50)',  label: 'Platform' },
-                { color: 'rgba(147,51,234,0.50)',  label: 'Business Continuity' },
-                { color: 'rgba(34,197,94,0.55)',   label: 'New' },
-              ].map(({ color, label }) => (
-                <div key={label} className="flex items-center gap-1.5">
-                  <span
-                    className="inline-block w-3 h-3 rounded-sm shrink-0"
-                    style={{ backgroundColor: color }}
-                  />
-                  <span className="text-xs text-on-surface-variant">{label}</span>
-                </div>
-              ))}
+            <div className="flex items-center gap-2">
+              {([
+                { color: 'rgba(91,141,217,0.55)',  activeColor: 'rgba(91,141,217,0.18)',  key: 'Replacement',         label: 'Replacement' },
+                { color: 'rgba(249,115,22,0.50)',  activeColor: 'rgba(249,115,22,0.15)',  key: 'Platform',            label: 'Platform' },
+                { color: 'rgba(147,51,234,0.50)',  activeColor: 'rgba(147,51,234,0.15)', key: 'BusinessContinuity',  label: 'Business Continuity' },
+                { color: 'rgba(34,197,94,0.55)',   activeColor: 'rgba(34,197,94,0.15)',  key: 'New',                 label: 'New' },
+              ] as { color: string; activeColor: string; key: string; label: string }[]).map(({ color, activeColor, key, label }) => {
+                const isHidden = hiddenWorkTypes.has(key);
+                return (
+                  <button
+                    key={key}
+                    onClick={() => toggleWorkType(key)}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-colors"
+                    style={{
+                      backgroundColor: isHidden ? 'transparent' : activeColor,
+                      color: isHidden ? 'var(--color-on-surface-variant)' : 'var(--color-on-surface)',
+                      opacity: isHidden ? 0.45 : 1,
+                      border: `1px solid ${isHidden ? 'transparent' : color}`,
+                    }}
+                    title={isHidden ? `Show ${label}` : `Hide ${label}`}
+                  >
+                    <span
+                      className="inline-block w-2.5 h-2.5 rounded-sm shrink-0"
+                      style={{ backgroundColor: isHidden ? 'rgba(120,120,120,0.4)' : color }}
+                    />
+                    {label}
+                  </button>
+                );
+              })}
             </div>
           </>
         )}
+        <div className="w-px h-5 bg-outline-variant mx-1" />
+        <div className="flex items-center gap-2">
+          {([
+            { color: 'rgba(59,130,246,0.55)',  activeColor: 'rgba(59,130,246,0.12)',  key: 'INITIATIVE',  label: 'Initiatives' },
+            { color: 'rgba(185,28,28,0.55)',   activeColor: 'rgba(185,28,28,0.12)',   key: 'IMPEDIMENT',  label: 'Impediments' },
+          ] as { color: string; activeColor: string; key: string; label: string }[]).map(({ color, activeColor, key, label }) => {
+            const isHidden = hiddenEventTypes.has(key);
+            return (
+              <button
+                key={key}
+                onClick={() => toggleEventType(key)}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-colors"
+                style={{
+                  backgroundColor: isHidden ? 'transparent' : activeColor,
+                  color: isHidden ? 'var(--color-on-surface-variant)' : 'var(--color-on-surface)',
+                  opacity: isHidden ? 0.45 : 1,
+                  border: `1px solid ${isHidden ? 'transparent' : color}`,
+                }}
+                title={isHidden ? `Show ${label}` : `Hide ${label}`}
+              >
+                <span
+                  className="inline-block w-2.5 h-2.5 rounded-sm shrink-0"
+                  style={{ backgroundColor: isHidden ? 'rgba(120,120,120,0.4)' : color }}
+                />
+                {label}
+              </button>
+            );
+          })}
+        </div>
         <div className="flex-1" />
         <button
           onClick={handleDownload}
