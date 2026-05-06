@@ -17,6 +17,7 @@ type Event = {
   resourceCount: number | null;
   resourcesReturned: boolean;
   conclusionType: string | null;
+  workType: string | null;
   timelineId: number;
 };
 
@@ -98,6 +99,15 @@ const SENTIMENT_COLOR: Record<string, string> = {
   POSITIVE: '#648d78',
   NEGATIVE: '#ef9a9a',
   NEUTRAL: '#9aa3af',
+};
+
+// Colors matching the capacity band work-type key
+const WORK_TYPE_COLOR: Record<string, string> = {
+  Replacement:        'rgba(91,141,217,0.9)',
+  Platform:           'rgba(249,115,22,0.9)',
+  BusinessContinuity: 'rgba(239,68,68,0.9)',
+  New:                'rgba(34,197,94,0.9)',
+  'Replacement/New':  'rgba(91,141,217,0.75)',
 };
 
 const EVENT_TYPE_LABEL: Record<string, string> = {
@@ -813,7 +823,9 @@ export function TimelineViewClient({
       eventsG.append('line')
         .attr('x1', x).attr('x2', x)
         .attr('y1', lineY1).attr('y2', lineY2)
-        .attr('stroke', 'rgba(68,71,76,0.3)')
+        .attr('stroke', event.type === 'DELIVERABLE' && event.workType
+          ? WORK_TYPE_COLOR[event.workType] ?? 'rgba(68,71,76,0.3)'
+          : 'rgba(68,71,76,0.3)')
         .attr('stroke-width', 1);
 
       // Label group
@@ -846,20 +858,35 @@ export function TimelineViewClient({
         .attr('font-family', 'Inter, sans-serif')
         .text(formatDate(event.date));
 
-      // Dot
-      eventsG.append('circle')
-        .attr('cx', x)
-        .attr('cy', TIMELINE_Y)
-        .attr('r', 6)
-        .attr('fill', color)
-        .attr('stroke', color)
-        .attr('stroke-width', 2)
-        .style('cursor', 'pointer')
-        .on('mouseenter', (mouseEvent: MouseEvent) => {
-          cancelHide();
-          setTooltip({ kind: 'event', event, x: mouseEvent.clientX, y: mouseEvent.clientY });
-        })
-        .on('mouseleave', () => scheduleHide());
+      // Dot or star
+      if (event.type === 'DELIVERABLE' && event.workType) {
+        const starColor = WORK_TYPE_COLOR[event.workType] ?? '#9aa3af';
+        eventsG.append('path')
+          .attr('d', d3.symbol(d3.symbolStar, 48)())
+          .attr('transform', `translate(${x}, ${TIMELINE_Y})`)
+          .attr('fill', starColor)
+          .attr('stroke', 'none')
+          .style('cursor', 'pointer')
+          .on('mouseenter', (mouseEvent: MouseEvent) => {
+            cancelHide();
+            setTooltip({ kind: 'event', event, x: mouseEvent.clientX, y: mouseEvent.clientY });
+          })
+          .on('mouseleave', () => scheduleHide());
+      } else {
+        eventsG.append('circle')
+          .attr('cx', x)
+          .attr('cy', TIMELINE_Y)
+          .attr('r', 6)
+          .attr('fill', color)
+          .attr('stroke', color)
+          .attr('stroke-width', 2)
+          .style('cursor', 'pointer')
+          .on('mouseenter', (mouseEvent: MouseEvent) => {
+            cancelHide();
+            setTooltip({ kind: 'event', event, x: mouseEvent.clientX, y: mouseEvent.clientY });
+          })
+          .on('mouseleave', () => scheduleHide());
+      }
     });
 
     /* ─── Zoom behavior ─── */

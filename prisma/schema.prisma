@@ -47,6 +47,7 @@ model Event {
   resourceCount     Int?
   resourcesReturned Boolean          @default(false)
   conclusionType    ConclusionType?
+  workType          String?
   timelineId        Int
   timeline          Timeline         @relation(fields: [timelineId], references: [id], onDelete: Cascade)
   createdAt         DateTime         @default(now())
