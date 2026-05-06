@@ -34,6 +34,7 @@ model Timeline {
   updatedAt       DateTime         @updatedAt
   events          Event[]
   risks           Risk[]
+  quarterlyCapacities QuarterlyCapacity[]
 }
 
 model Event {
@@ -65,6 +66,30 @@ model Risk {
   timeline   Timeline  @relation(fields: [timelineId], references: [id], onDelete: Cascade)
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
+}
+
+model QuarterlyCapacity {
+  id                   Int          @id @default(autoincrement())
+  timelineId           Int
+  timeline             Timeline     @relation(fields: [timelineId], references: [id], onDelete: Cascade)
+  fiscalYear           Int
+  quarter              FiscalQuarter
+  totalFte             Float        @default(0)
+  platformFte          Float        @default(0)
+  replacementFte       Float        @default(0)
+  newFte               Float        @default(0)
+  businessContinuityFte Float       @default(0)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  @@unique([timelineId, fiscalYear, quarter])
+}
+
+enum FiscalQuarter {
+  Q1
+  Q2
+  Q3
+  Q4
 }
 
 enum BranchCloseMode {

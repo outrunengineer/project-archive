@@ -98,6 +98,24 @@ const EVENT_TYPE_LABEL: Record<string, string> = {
   FINISHED: 'Finished',
 };
 
+// Fiscal year quarters: Q1=Nov1–Feb28, Q2=Mar1–May14, Q3=May15–Aug14, Q4=Aug15–Oct31
+// FY number = the calendar year that Q2–Q4 fall in (e.g. Nov 1 2025 → Q1 FY26)
+function getFiscalQuarters(start: Date, end: Date): Array<{ date: Date; label: string }> {
+  const result: Array<{ date: Date; label: string }> = [];
+  for (let yr = start.getFullYear() - 1; yr <= end.getFullYear() + 1; yr++) {
+    const candidates = [
+      { date: new Date(yr, 10, 1),      label: 'Q1' }, // Nov 1
+      { date: new Date(yr + 1, 2, 1),   label: 'Q2' }, // Mar 1
+      { date: new Date(yr + 1, 4, 15),  label: 'Q3' }, // May 15
+      { date: new Date(yr + 1, 7, 15),  label: 'Q4' }, // Aug 15
+    ];
+    for (const q of candidates) {
+      if (q.date >= start && q.date <= end) result.push(q);
+    }
+  }
+  return result;
+}
+
 export function TimelineViewClient({
   timeline,
   branches,
@@ -189,7 +207,7 @@ export function TimelineViewClient({
     const height = container.clientHeight;
     const MARGIN = { top: 80, right: 60, bottom: 60, left: 60 };
     const TIMELINE_Y = height / 2;
-    const CAPACITY_HEIGHT = 60;
+    const CAPACITY_HEIGHT = 30;
 
     d3.select(svg).selectAll('*').remove();
 
@@ -348,21 +366,25 @@ export function TimelineViewClient({
 
     d3.timeMonth.range(domainStart, domainEnd).forEach((month) => {
       const x = xScale(month);
+      const isJanuary = month.getMonth() === 0;
 
       monthMarkersG.append('line')
         .attr('x1', x).attr('x2', x)
         .attr('y1', MARGIN.top)
         .attr('y2', height)
-        .attr('stroke', 'rgba(68,71,76,0.1)')
-        .attr('stroke-width', 1);
+        .attr('stroke', isJanuary ? 'rgba(68,71,76,0.2)' : 'rgba(68,71,76,0.1)')
+        .attr('stroke-width', isJanuary ? 1.5 : 1);
 
-      monthMarkersG.append('text')
-        .attr('x', x + 3)
-        .attr('y', TIMELINE_Y + CAPACITY_HEIGHT / 2 + 27)
-        .attr('font-size', '9px')
-        .attr('fill', 'rgba(68,71,76,0.45)')
-        .attr('font-family', 'Inter, sans-serif')
-        .text(d3.timeFormat('%b %Y')(month));
+      if (isJanuary) {
+        monthMarkersG.append('text')
+          .attr('x', x + 4)
+          .attr('y', TIMELINE_Y + CAPACITY_HEIGHT / 2 + 27)
+          .attr('font-size', '10px')
+          .attr('font-weight', '600')
+          .attr('fill', 'rgba(68,71,76,0.5)')
+          .attr('font-family', 'Inter, sans-serif')
+          .text(d3.timeFormat('%Y')(month));
+      }
     });
 
     /* ─── Main Timeline Line ─── */
@@ -402,6 +424,33 @@ export function TimelineViewClient({
         .attr('font-family', 'Inter, sans-serif')
         .text('Today');
     }
+
+    /* ─── Fiscal Quarter Markers ─── */
+    const fqG = g.append('g')
+      .attr('class', 'fiscal-quarters')
+      .attr('clip-path', 'url(#timeline-clip)');
+
+    getFiscalQuarters(domainStart, domainEnd).forEach(({ date, label }) => {
+      const x = xScale(date);
+      // Tick drop below the timeline line
+      fqG.append('line')
+        .attr('x1', x).attr('x2', x)
+        .attr('y1', TIMELINE_Y + 3).attr('y2', TIMELINE_Y + 14)
+        .attr('stroke', 'rgba(91,141,217,0.55)')
+        .attr('stroke-width', 1.5)
+        .attr('stroke-linecap', 'round');
+      // Quarter label
+      fqG.append('text')
+        .attr('x', x)
+        .attr('y', TIMELINE_Y + 26)
+        .attr('text-anchor', 'middle')
+        .attr('font-size', '9px')
+        .attr('font-weight', '700')
+        .attr('fill', 'rgba(91,141,217,0.65)')
+        .attr('font-family', 'Inter, sans-serif')
+        .attr('letter-spacing', '0.05em')
+        .text(label);
+    });
 
     /* ─── Branch Lines ─── */
     branches.forEach((branch, bi) => {

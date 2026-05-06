@@ -29,6 +29,14 @@ When implementing any feature change, addition, or modification requested by the
 - Markers render behind all other content (capacity band, timeline line, event dots)
 - Replaced the previous quarterly x-axis tick marks
 
+### Timeline Visualization — Fiscal Quarter Markers
+- Fiscal year quarters: Q1 = Nov 1–Feb 28, Q2 = Mar 1–May 14, Q3 = May 15–Aug 14, Q4 = Aug 15–Oct 31
+- FY number = the calendar year that Q2–Q4 fall in (e.g. Nov 1 2025 → Q1 FY26, label "Q1 '26")
+- A short tick mark drops **below** the timeline line at each quarter start (y: TIMELINE_Y+3 → TIMELINE_Y+14)
+- A small muted-blue label ("Q1 '26", 9px, bold) sits just below the tick at TIMELINE_Y+26
+- Renders on top of the main timeline line, below event dots
+- Color: `rgba(91,141,217,0.65)` to harmonize with the timeline blue
+
 ---
 
 Project Overview and Goals
