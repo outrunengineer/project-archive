@@ -25,6 +25,7 @@ type Event = {
   resourceCount: number | null;
   resourcesReturned: boolean;
   conclusionType: string | null;
+  workType: string | null;
   timelineId: number;
 };
 
@@ -88,6 +89,15 @@ const SENTIMENT_OPTIONS = [
   { value: 'NEUTRAL', label: 'Neutral' },
 ];
 
+const WORK_TYPE_OPTIONS = [
+  { value: '', label: '— None —' },
+  { value: 'Replacement', label: 'Replacement' },
+  { value: 'Platform', label: 'Platform' },
+  { value: 'BusinessContinuity', label: 'Business Continuity' },
+  { value: 'New', label: 'New' },
+  { value: 'Replacement/New', label: 'Replacement / New' },
+];
+
 const STATUS_OPTIONS = [
   { value: 'Ongoing', label: 'Ongoing' },
   { value: 'Completed', label: 'Completed' },
@@ -134,6 +144,7 @@ type NewEventDraft = {
   resourceCount: string;
   resourcesReturned: boolean;
   conclusionType: string;
+  workType: string;
   timelineId: number;
 };
 
@@ -161,6 +172,7 @@ function blankDraft(timelineId: number): NewEventDraft {
     resourceCount: '',
     resourcesReturned: false,
     conclusionType: 'PAUSED',
+    workType: '',
     timelineId,
   };
 }
@@ -279,6 +291,7 @@ export function TimelineConfigClient({
           resourceCount: newEvent.resourceCount ? Number(newEvent.resourceCount) : null,
           resourcesReturned: newEvent.resourcesReturned,
           conclusionType: newEvent.type === 'FINISHED' ? newEvent.conclusionType : null,
+          workType: newEvent.type === 'DELIVERABLE' ? (newEvent.workType || null) : null,
         }),
       });
       if (res.ok) {
@@ -667,6 +680,14 @@ export function TimelineConfigClient({
                   onChange={(e) => setNewEvent((n) => n && { ...n, resourceCount: e.target.value })}
                 />
               </div>
+              {newEvent.type === 'DELIVERABLE' && (
+                <Select
+                  label="Work Type"
+                  options={WORK_TYPE_OPTIONS}
+                  value={newEvent.workType}
+                  onChange={(v) => setNewEvent((n) => n && { ...n, workType: v })}
+                />
+              )}
               {newEvent.type === 'FINISHED' && !siblings.find((s) => s.id === newEvent.timelineId)?.isMain && (
                 <div className="grid grid-cols-2 gap-3 pt-1 border-t border-outline-variant">
                   <Select
@@ -784,6 +805,17 @@ export function TimelineConfigClient({
                       <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
                   </select>
+                  {(eventValue(event, 'type') ?? event.type) === 'DELIVERABLE' && (
+                    <select
+                      className="text-xs bg-surface-container-high rounded-md px-2 h-7 outline-none cursor-pointer mt-0.5"
+                      value={String(eventValue(event, 'workType') ?? event.workType ?? '')}
+                      onChange={(e) => patchDraft(event.id, 'workType', e.target.value || null)}
+                    >
+                      {WORK_TYPE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
                 {/* Headcount */}

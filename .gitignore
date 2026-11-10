@@ -51,4 +51,7 @@ coverage/
 # ─── Misc ──────────────────────────────────────────────────────────────────────
 *.tsbuildinfo
 .turbo/
+
+# ─── HEB-specific data (keep local only) ──────────────────────────────────────
 *.csv
+scripts/seed-*.mjs

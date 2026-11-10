@@ -15,7 +15,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 export async function POST(req: NextRequest, { params }: Params) {
   const { id } = await params;
   const body = await req.json();
-  const { name, date, description, type, impactSentiment, resourceCount, resourcesReturned, conclusionType } = body;
+  const { name, date, description, type, impactSentiment, resourceCount, resourcesReturned, conclusionType, workType } = body;
 
   if (!name || !date || !type) {
     return NextResponse.json({ error: 'name, date, and type are required' }, { status: 400 });
@@ -31,6 +31,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       resourceCount: resourceCount ?? null,
       resourcesReturned: resourcesReturned ?? false,
       conclusionType: conclusionType ?? null,
+      workType: workType ?? null,
       timelineId: Number(id),
     },
   });

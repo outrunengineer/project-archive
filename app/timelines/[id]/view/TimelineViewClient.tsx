@@ -183,7 +183,7 @@ export function TimelineViewClient({
     });
   }
 
-  const [hiddenEventTypes, setHiddenEventTypes] = useState<Set<string>>(new Set());
+  const [hiddenEventTypes, setHiddenEventTypes] = useState<Set<string>>(new Set(['INITIATIVE', 'KEY_DECISION']));
 
   function toggleEventType(type: string) {
     setHiddenEventTypes((prev) => {
@@ -201,7 +201,7 @@ export function TimelineViewClient({
 
   const scheduleHide = useCallback(() => {
     if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = setTimeout(() => setTooltip(null), 3000);
+    hideTimerRef.current = setTimeout(() => setTooltip(null), 1500);
   }, []);
 
   const cancelHide = useCallback(() => {
@@ -1204,8 +1204,9 @@ export function TimelineViewClient({
         <div className="w-px h-5 bg-outline-variant mx-1" />
         <div className="flex items-center gap-2">
           {([
-            { color: 'rgba(59,130,246,0.55)',  activeColor: 'rgba(59,130,246,0.12)',  key: 'INITIATIVE',  label: 'Initiatives' },
-            { color: 'rgba(185,28,28,0.55)',   activeColor: 'rgba(185,28,28,0.12)',   key: 'IMPEDIMENT',  label: 'Impediments' },
+            { color: 'rgba(59,130,246,0.55)',  activeColor: 'rgba(59,130,246,0.12)',  key: 'INITIATIVE',   label: 'Initiatives' },
+            { color: 'rgba(234,179,8,0.65)',   activeColor: 'rgba(234,179,8,0.12)',   key: 'KEY_DECISION', label: 'Key Decisions' },
+            { color: 'rgba(185,28,28,0.55)',   activeColor: 'rgba(185,28,28,0.12)',   key: 'IMPEDIMENT',   label: 'Impediments' },
           ] as { color: string; activeColor: string; key: string; label: string }[]).map(({ color, activeColor, key, label }) => {
             const isHidden = hiddenEventTypes.has(key);
             return (
@@ -1257,6 +1258,13 @@ export function TimelineViewClient({
             onMouseEnter={cancelHide}
             onMouseLeave={scheduleHide}
           >
+            <button
+              onClick={() => { cancelHide(); setTooltip(null); }}
+              className="absolute top-1.5 right-1.5 opacity-50 hover:opacity-100 transition-opacity leading-none"
+              aria-label="Close"
+            >
+              ✕
+            </button>
             {tooltip.kind === 'event' ? (
               <>
                 <div className="font-semibold font-display mb-0.5">{tooltip.event.name}</div>

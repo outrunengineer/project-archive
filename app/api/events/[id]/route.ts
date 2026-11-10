@@ -6,7 +6,7 @@ type Params = { params: Promise<{ id: string }> };
 export async function PATCH(req: NextRequest, { params }: Params) {
   const { id } = await params;
   const body = await req.json();
-  const { name, date, description, type, impactSentiment, resourceCount, resourcesReturned, conclusionType } = body;
+  const { name, date, description, type, impactSentiment, resourceCount, resourcesReturned, conclusionType, workType } = body;
 
   const event = await prisma.event.update({
     where: { id: Number(id) },
@@ -19,6 +19,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       ...(resourceCount !== undefined && { resourceCount }),
       ...(resourcesReturned !== undefined && { resourcesReturned }),
       ...(conclusionType !== undefined && { conclusionType }),
+      ...(workType !== undefined && { workType: workType || null }),
     },
   });
 
